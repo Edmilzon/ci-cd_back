@@ -11,8 +11,12 @@ public class SessionInvalidator {
 	public SessionInvalidator(FindByIndexNameSessionRepository<? extends Session> sessions) { this.sessions = sessions; }
 
 	public void invalidate(String username) {
+		invalidateExcept(username, null);
+	}
+
+	public void invalidateExcept(String username, String excludedSessionId) {
 		for (Session session : sessions.findByPrincipalName(username).values()) {
-			sessions.deleteById(session.getId());
+			if (excludedSessionId == null || !excludedSessionId.equals(session.getId())) sessions.deleteById(session.getId());
 		}
 	}
 }

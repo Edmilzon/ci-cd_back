@@ -32,6 +32,7 @@ Las contraseñas se guardan con Argon2id. Spring Security administra la cookie d
 - `POST /api/auth/login` recibe `application/x-www-form-urlencoded` con `email` y `password`.
 - `GET /api/auth/me` devuelve el perfil de la sesión activa.
 - `POST /api/auth/logout` invalida la sesión actual.
+- `PUT /api/auth/password` valida la contraseña actual, cambia la contraseña y cierra las otras sesiones.
 ## Roles y permisos
 
 Al iniciar, CDCI crea `ADMIN`, `MAINTAINER`, `DEVELOPER` y `VIEWER` con un catálogo explícito de permisos. Los roles de sistema son de solo lectura; un administrador puede crear roles personalizados, asignarles permisos y conceder esos roles a cuentas existentes. Una cuenta nueva solo recibe `VIEWER`.

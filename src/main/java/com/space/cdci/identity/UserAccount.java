@@ -64,4 +64,5 @@ public class UserAccount {
 	public Set<Role> getRoles() { return roles; }
 	public void setEnabled(boolean enabled) { this.enabled = enabled; this.updatedAt = Instant.now(); }
 	public void setRoles(Set<Role> roles) { this.roles = new HashSet<>(roles); this.updatedAt = Instant.now(); }
+	public void changePasswordHash(String passwordHash) { this.passwordHash = passwordHash; this.updatedAt = Instant.now(); }
 }

@@ -15,6 +15,10 @@ public final class AuthDtos {
 			@NotBlank @Size(min = 2, max = 80) String fullName,
 			@NotBlank @Size(min = 12, max = 128) String password) {}
 
+	public record PasswordChangeRequest(
+			@NotBlank @Size(max = 128) String currentPassword,
+			@NotBlank @Size(min = 12, max = 128) String newPassword) {}
+
 	public record UserResponse(UUID id, String email, String fullName, Set<String> roles, Set<String> permissions, Instant createdAt) {
 		public static UserResponse from(UserAccount user) {
 			Set<String> roles = user.getRoles().stream().map(Role::getCode).collect(java.util.stream.Collectors.toUnmodifiableSet());
