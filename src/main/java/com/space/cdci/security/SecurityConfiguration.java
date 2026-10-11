@@ -10,7 +10,7 @@ import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.password.Argon2PasswordEncoder;
+import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
@@ -53,6 +53,7 @@ public class SecurityConfiguration {
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
 				.requestMatchers("/api/auth/**").authenticated()
 				.requestMatchers("/api/admin/**").authenticated()
+				.requestMatchers("/api/projects/**", "/api/integrations/github/**").authenticated()
 				.anyRequest().denyAll())
 			.formLogin(form -> form
 				.loginProcessingUrl("/api/auth/login")

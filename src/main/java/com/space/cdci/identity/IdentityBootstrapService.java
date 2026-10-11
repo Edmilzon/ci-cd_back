@@ -35,9 +35,9 @@ public class IdentityBootstrapService {
 		Role admin = findOrCreateRole("ADMIN", "Administrador", "Administración completa de la plataforma.");
 		Role maintainer = findOrCreateRole("MAINTAINER", "Mantenedor", "Administra pipelines y operaciones de despliegue.");
 		Role developer = findOrCreateRole("DEVELOPER", "Desarrollador", "Ejecuta pipelines y consulta despliegues.");
-		viewer.replacePermissions(select(catalog, "PIPELINE_READ", "DEPLOYMENT_READ"));
-		developer.replacePermissions(select(catalog, "PIPELINE_READ", "PIPELINE_RUN", "DEPLOYMENT_READ"));
-		maintainer.replacePermissions(select(catalog, "USER_READ", "ROLE_READ", "PIPELINE_READ", "PIPELINE_RUN", "PIPELINE_MANAGE", "DEPLOYMENT_READ", "DEPLOYMENT_RUN"));
+		viewer.replacePermissions(select(catalog, "PROJECT_READ", "PROJECT_CREATE", "GITHUB_CONNECT", "PIPELINE_READ", "DEPLOYMENT_READ"));
+		developer.replacePermissions(select(catalog, "PROJECT_READ", "PROJECT_CREATE", "GITHUB_CONNECT", "PIPELINE_READ", "PIPELINE_RUN", "DEPLOYMENT_READ"));
+		maintainer.replacePermissions(select(catalog, "PROJECT_READ", "PROJECT_CREATE", "GITHUB_CONNECT", "USER_READ", "ROLE_READ", "PIPELINE_READ", "PIPELINE_RUN", "PIPELINE_MANAGE", "DEPLOYMENT_READ", "DEPLOYMENT_RUN"));
 		admin.replacePermissions(Set.copyOf(catalog.values()));
 		roles.saveAll(Set.of(viewer, admin, maintainer, developer));
 		if (adminEmail == null || adminEmail.isBlank() || adminPassword == null || adminPassword.isBlank()) return;
@@ -67,6 +67,10 @@ public class IdentityBootstrapService {
 		specifications.put("DEPLOYMENT_RUN", new PermissionSpec("Ejecutar despliegues", "Promover versiones a entornos."));
 		specifications.put("AUDIT_READ", new PermissionSpec("Leer auditoría", "Consultar cambios de acceso y administración."));
 		specifications.put("SETTINGS_MANAGE", new PermissionSpec("Administrar configuración", "Modificar la configuración del espacio."));
+		specifications.put("PROJECT_READ", new PermissionSpec("Leer proyectos", "Consultar proyectos a los que pertenece."));
+		specifications.put("PROJECT_CREATE", new PermissionSpec("Crear proyectos", "Crear y administrar proyectos propios."));
+		specifications.put("PROJECT_ADMIN", new PermissionSpec("Administrar todos los proyectos", "Acceso global de soporte y administración de proyectos."));
+		specifications.put("GITHUB_CONNECT", new PermissionSpec("Conectar GitHub", "Autorizar GitHub y consultar los repositorios permitidos."));
 		Map<String, Permission> result = new LinkedHashMap<>();
 		specifications.forEach((code, spec) -> result.put(code, permissions.findByCode(code)
 				.orElseGet(() -> permissions.save(new Permission(code, spec.name(), spec.description())))));

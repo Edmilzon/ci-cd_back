@@ -22,6 +22,9 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_BOOTSTRAP_ADMIN_EMAIL` / `CDCI_BOOTSTRAP_ADMIN_PASSWORD` | Credenciales del primer admin | Sin valor por defecto |
 | `CDCI_COOKIE_SECURE` | Marca `Secure` para cookie de sesión | `false` en localhost; `true` en HTTPS |
 | `CDCI_COOKIE_SAME_SITE` | Política SameSite de la cookie | `lax`; si front y API están en sitios distintos usa `none` junto a HTTPS y `Secure` |
+| `CDCI_GITHUB_CLIENT_ID` / `CDCI_GITHUB_CLIENT_SECRET` | Credenciales de la GitHub App | Sin valores por defecto |
+| `CDCI_GITHUB_CALLBACK_URL` | URL registrada como callback OAuth de la App | `http://localhost:8080/api/integrations/github/callback` |
+| `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` | Clave base64 de 32 bytes para AES-256-GCM en tokens/refresh tokens persistidos | Sin valor por defecto |
 
 Las contraseñas se guardan con Argon2id. Spring Security administra la cookie de sesión `HttpOnly`; las rutas mutables requieren el token CSRF entregado por `GET /api/auth/csrf`. No guardes la cookie de sesión en almacenamiento web. En despliegues, usa secretos gestionados para credenciales de base de datos y bootstrap, TLS, orígenes CORS exactos y cookie `Secure`.
 
@@ -47,3 +50,19 @@ Al iniciar, CDCI crea `ADMIN`, `MAINTAINER`, `DEVELOPER` y `VIEWER` con un catá
 Cada operación administrativa comprueba permisos en el servidor. Los cambios de estado, roles y permisos invalidan las sesiones afectadas; el sistema impide suspender o degradar al último administrador activo.
 
 El backend es la autoridad para identidad y autorización; ocultar acciones en la UI no sustituye la validación de permisos del servidor.
+
+## Proyectos y GitHub
+
+La API permite crear/editar/archivar proyectos, administrar miembros con acceso `OWNER`, `MAINTAINER`, `DEVELOPER` o `VIEWER`, y vincular repositorios GitHub. Solo se pueden agregar cuentas CDCI existentes. Las rutas `/api/projects` verifican membresía y nivel de acceso en el servidor; los cambios se registran en la bitácora de auditoría.
+
+La primera integración usa una **GitHub App** y tokens de usuario con permisos de lectura de metadatos y contenidos. No uses un personal access token. Configúrala así:
+
+1. Registra la App y agrega `CDCI_GITHUB_CALLBACK_URL` como callback del flujo web OAuth. Activa tokens de usuario expirables y autoriza `offline_access` para permitir renovación.
+2. Concede permisos de repositorio `Metadata: read-only` y `Contents: read-only`; instala la App en la cuenta u organización y repositorios que se usarán.
+3. Copia su Client ID y Client Secret al entorno del backend. El Client ID es el de la App; no es el App ID.
+4. Genera `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` con PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Guárdala en el gestor de secretos del entorno. La misma clave debe mantenerse para poder leer conexiones existentes; perderla requiere reconectar GitHub.
+5. Conecta desde `/projects`. Desvincula todos los repositorios antes de desconectar la cuenta; CDCI revoca el grant de GitHub al hacerlo.
+
+El callback externo conserva la sesión CDCI del navegador. En producción, registra exactamente la URL HTTPS publicada y configura cookie `Secure`; si el frontend y la API están en sitios distintos, usa `SameSite=None` y HTTPS.
+
+Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).
