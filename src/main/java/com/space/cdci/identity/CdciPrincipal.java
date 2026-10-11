@@ -18,14 +18,16 @@ public final class CdciPrincipal implements UserDetails, CredentialsContainer, S
 	private final String fullName;
 	private final boolean enabled;
 	private final Set<String> roleCodes;
+	private final Set<String> permissionCodes;
 	private String passwordHash;
 
-	private CdciPrincipal(UUID id, String email, String fullName, boolean enabled, Set<String> roleCodes, String passwordHash) {
+	private CdciPrincipal(UUID id, String email, String fullName, boolean enabled, Set<String> roleCodes, Set<String> permissionCodes, String passwordHash) {
 		this.id = id;
 		this.email = email;
 		this.fullName = fullName;
 		this.enabled = enabled;
 		this.roleCodes = Set.copyOf(roleCodes);
+		this.permissionCodes = Set.copyOf(permissionCodes);
 		this.passwordHash = passwordHash;
 	}
 
@@ -34,8 +36,12 @@ public final class CdciPrincipal implements UserDetails, CredentialsContainer, S
 	public String fullName() { return fullName; }
 	public boolean enabled() { return enabled; }
 	public Set<String> roleCodes() { return roleCodes; }
+	public Set<String> permissionCodes() { return permissionCodes; }
 	@Override public Collection<? extends GrantedAuthority> getAuthorities() {
-		return roleCodes.stream().map(code -> new SimpleGrantedAuthority("ROLE_" + code)).toList();
+		java.util.Set<GrantedAuthority> authorities = new java.util.HashSet<>();
+		roleCodes.forEach(code -> authorities.add(new SimpleGrantedAuthority("ROLE_" + code)));
+		permissionCodes.forEach(code -> authorities.add(new SimpleGrantedAuthority(code)));
+		return Set.copyOf(authorities);
 	}
 	@Override public String getPassword() { return passwordHash; }
 	@Override public String getUsername() { return email; }
@@ -48,6 +54,8 @@ public final class CdciPrincipal implements UserDetails, CredentialsContainer, S
 
 	public static CdciPrincipal from(UserAccount account) {
 		Set<String> roleCodes = account.getRoles().stream().map(Role::getCode).collect(Collectors.toUnmodifiableSet());
-		return new CdciPrincipal(account.getId(), account.getEmail(), account.getFullName(), account.isEnabled(), roleCodes, account.getPasswordHash());
+		Set<String> permissions = account.getRoles().stream().flatMap(role -> role.getPermissions().stream())
+				.map(Permission::getCode).collect(Collectors.toUnmodifiableSet());
+		return new CdciPrincipal(account.getId(), account.getEmail(), account.getFullName(), account.isEnabled(), roleCodes, permissions, account.getPasswordHash());
 	}
 }

@@ -32,5 +32,17 @@ Las contraseñas se guardan con Argon2id. Spring Security administra la cookie d
 - `POST /api/auth/login` recibe `application/x-www-form-urlencoded` con `email` y `password`.
 - `GET /api/auth/me` devuelve el perfil de la sesión activa.
 - `POST /api/auth/logout` invalida la sesión actual.
+## Roles y permisos
+
+Al iniciar, CDCI crea `ADMIN`, `MAINTAINER`, `DEVELOPER` y `VIEWER` con un catálogo explícito de permisos. Los roles de sistema son de solo lectura; un administrador puede crear roles personalizados, asignarles permisos y conceder esos roles a cuentas existentes. Una cuenta nueva solo recibe `VIEWER`.
+
+- `GET /api/admin/users` lista cuentas paginadas y admite búsqueda por nombre/correo.
+- `PATCH /api/admin/users/{id}/status` habilita o suspende una cuenta.
+- `PUT /api/admin/users/{id}/roles` reemplaza sus roles.
+- `/api/admin/roles` permite consultar y administrar roles personalizados.
+- `GET /api/admin/permissions` devuelve el catálogo de permisos.
+- `GET /api/admin/audit` lista cambios de acceso.
+
+Cada operación administrativa comprueba permisos en el servidor. Los cambios de estado, roles y permisos invalidan las sesiones afectadas; el sistema impide suspender o degradar al último administrador activo.
 
 El backend es la autoridad para identidad y autorización; ocultar acciones en la UI no sustituye la validación de permisos del servidor.

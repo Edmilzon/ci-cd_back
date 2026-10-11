@@ -33,7 +33,8 @@ public class AuthController {
 
 	@GetMapping("/me")
 	public AuthDtos.UserResponse current(@AuthenticationPrincipal CdciPrincipal principal) {
-		UserAccount user = users.findWithRolesById(principal.id()).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
+		UserAccount user = users.findWithAccessById(principal.id()).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
 		return AuthDtos.UserResponse.from(user);
 	}
+
 }
