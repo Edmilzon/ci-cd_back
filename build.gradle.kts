@@ -18,11 +18,16 @@ repositories {
 }
 
 dependencies {
+	implementation("org.springframework.boot:spring-boot-starter-data-jpa")
+	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-security")
-	implementation("org.springframework.boot:spring-boot-starter-security-oauth2-client")
+	implementation("org.springframework.boot:spring-boot-starter-session-jdbc")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
+	implementation("org.springframework.boot:spring-boot-starter-flyway")
+	implementation("org.flywaydb:flyway-database-postgresql")
+	implementation("org.postgresql:postgresql")
+	implementation("org.bouncycastle:bcprov-jdk18on:1.86")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
-	testImplementation("org.springframework.boot:spring-boot-starter-security-oauth2-client-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-security-test")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

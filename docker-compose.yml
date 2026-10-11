@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: cdci-postgres
+    environment:
+      POSTGRES_DB: cdci
+      POSTGRES_USER: cdci
+      POSTGRES_PASSWORD: ${CDCI_DATABASE_PASSWORD:-cdci_dev_only}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - cdci-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdci -d cdci"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cdci-postgres-data:
