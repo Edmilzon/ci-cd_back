@@ -27,12 +27,20 @@ public class PipelineRun {
 	@Column(name = "started_at") private Instant startedAt;
 	@Column(name = "completed_at") private Instant completedAt;
 	@Column(name = "failure_message", columnDefinition = "text") private String failureMessage;
+	@Column(name = "source_commit_sha", length = 40) private String sourceCommitSha;
+	@Column(name = "rollback_environment", length = 64) private String rollbackEnvironment;
+	@Column(name = "rollback_of_deployment_id") private UUID rollbackOfDeploymentId;
 	@Column(name = "claimed_by_worker_id", length = 100) private String claimedByWorkerId;
 	@Column(name = "lease_expires_at") private Instant leaseExpiresAt;
 
 	protected PipelineRun() {}
 
 	public PipelineRun(PipelineDefinition pipeline, PipelineVersion pipelineVersion, String branchName, UserAccount requestedBy) {
+		this(pipeline, pipelineVersion, branchName, requestedBy, null, null, null);
+	}
+
+	public PipelineRun(PipelineDefinition pipeline, PipelineVersion pipelineVersion, String branchName, UserAccount requestedBy,
+			String sourceCommitSha, String rollbackEnvironment, UUID rollbackOfDeploymentId) {
 		this.id = UUID.randomUUID();
 		this.pipeline = pipeline;
 		this.pipelineVersion = pipelineVersion;
@@ -41,6 +49,15 @@ public class PipelineRun {
 		this.status = PipelineRunStatus.QUEUED;
 		this.requestedBy = requestedBy;
 		this.requestedAt = Instant.now();
+		this.sourceCommitSha = sourceCommitSha;
+		this.rollbackEnvironment = rollbackEnvironment;
+		this.rollbackOfDeploymentId = rollbackOfDeploymentId;
+	}
+
+	public void pinSourceCommit(String commitSha) {
+		if (commitSha == null || !commitSha.matches("[a-f0-9]{40}")) throw new IllegalArgumentException("Commit SHA inválido.");
+		if (sourceCommitSha != null && !sourceCommitSha.equals(commitSha)) throw new IllegalStateException("El commit de ejecución ya está fijado.");
+		this.sourceCommitSha = commitSha;
 	}
 
 	public void claim(String workerId) {
@@ -83,6 +100,9 @@ public class PipelineRun {
 	public Instant getStartedAt() { return startedAt; }
 	public Instant getCompletedAt() { return completedAt; }
 	public String getFailureMessage() { return failureMessage; }
+	public String getSourceCommitSha() { return sourceCommitSha; }
+	public String getRollbackEnvironment() { return rollbackEnvironment; }
+	public UUID getRollbackOfDeploymentId() { return rollbackOfDeploymentId; }
 	public String getClaimedByWorkerId() { return claimedByWorkerId; }
 	public Instant getLeaseExpiresAt() { return leaseExpiresAt; }
 }

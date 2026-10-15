@@ -10,9 +10,12 @@ public final class DashboardDtos {
 
 	public record Summary(int projectCount, long pipelineCount, long runsToday, long activeRuns,
 			double successRate30Days, Long medianDurationMillis30Days, List<DailyRuns> dailyRuns,
-			List<RecentRun> recentRuns) {}
+			List<RecentRun> recentRuns, List<RecentDeployment> recentDeployments) {}
 	public record DailyRuns(LocalDate day, long succeeded, long failed, long active) {}
 	public record RecentRun(UUID id, UUID projectId, UUID pipelineId, String projectName, String pipelineName,
 			String repositoryName, String branchName, int version, String status, String requestedBy,
 			Instant requestedAt, Instant startedAt, Instant completedAt, Long durationMillis) {}
+	public record RecentDeployment(UUID id, UUID projectId, UUID runId, String projectName, String pipelineName,
+			String repositoryName, String environmentName, String sourceCommitSha, String status,
+			Instant requestedAt, String githubHtmlUrl) {}
 }

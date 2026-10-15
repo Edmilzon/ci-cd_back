@@ -90,6 +90,34 @@ class BackendClient:
     def heartbeat(self, run_id: str, worker_id: str) -> None:
         self.post(f"/api/runner/runs/{run_id}/heartbeat", {"workerId": worker_id})
 
+    def report_source(self, run_id: str, worker_id: str, commit_sha: str) -> None:
+        self.post(f"/api/runner/runs/{run_id}/source", {"workerId": worker_id, "commitSha": commit_sha})
+
+    def request_deployment(self, run_id: str, worker_id: str, job_id: str, environment: str, commit_sha: str) -> dict:
+        _, result = self.post(f"/api/runner/runs/{run_id}/deployments", {
+            "workerId": worker_id, "jobId": job_id, "environmentName": environment, "commitSha": commit_sha,
+        })
+        if not isinstance(result, dict) or not isinstance(result.get("id"), str):
+            raise RuntimeError("La API devolvió una solicitud de despliegue no válida.")
+        return result
+
+    def deployment_approval_status(self, run_id: str, deployment_id: str, worker_id: str) -> dict:
+        _, result = self.post(f"/api/runner/runs/{run_id}/deployments/{deployment_id}/approval-status", {"workerId": worker_id})
+        if not isinstance(result, dict):
+            raise RuntimeError("La API devolvió un estado de aprobación no válido.")
+        return result
+
+    def start_deployment(self, run_id: str, deployment_id: str, worker_id: str) -> dict:
+        _, result = self.post(f"/api/runner/runs/{run_id}/deployments/{deployment_id}/start", {"workerId": worker_id})
+        if not isinstance(result, dict) or result.get("status") not in {"IN_PROGRESS", "APPROVED"}:
+            raise RuntimeError("No se pudo confirmar en GitHub el inicio del despliegue.")
+        return result
+
+    def complete_deployment(self, run_id: str, deployment_id: str, worker_id: str, succeeded: bool) -> None:
+        self.post(f"/api/runner/runs/{run_id}/deployments/{deployment_id}/complete", {
+            "workerId": worker_id, "succeeded": succeeded,
+        })
+
     def complete(self, run_id: str, worker_id: str, succeeded: bool, failure: str = "") -> None:
         payload = {"workerId": worker_id, "status": "SUCCEEDED" if succeeded else "FAILED", "failureMessage": failure or None}
         self.post(f"/api/runner/runs/{run_id}/complete", payload)
@@ -184,7 +212,7 @@ def safe_branch(branch: str) -> str:
     return branch
 
 
-def clone_repository(claim: dict, target: Path, sink: LogSink, lease_lost: threading.Event) -> None:
+def clone_repository(claim: dict, target: Path, sink: LogSink, lease_lost: threading.Event) -> str:
     repository_name, clone_url = safe_repository(claim)
     branch = safe_branch(claim.get("branchName", ""))
     token = claim.get("githubAccessToken", "")
@@ -204,8 +232,15 @@ def clone_repository(claim: dict, target: Path, sink: LogSink, lease_lost: threa
     })
     if lease_lost.is_set():
         raise RuntimeError("El worker perdió el lease de la ejecución.")
+    pinned_commit = claim.get("sourceCommitSha")
+    if pinned_commit is not None and (not isinstance(pinned_commit, str) or not re.fullmatch(r"[a-f0-9]{40}", pinned_commit)):
+        raise ValueError("El commit fijado para esta ejecución no es válido.")
+    clone_command = ["git", "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "clone", "--quiet", "--depth", "1", "--no-recurse-submodules"]
+    if pinned_commit is None:
+        clone_command.extend(["--branch", branch])
+    clone_command.extend([clone_url, str(target)])
     result = subprocess.run(
-        ["git", "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null", "clone", "--quiet", "--depth", "1", "--no-recurse-submodules", "--branch", branch, clone_url, str(target)],
+        clone_command,
         env=env,
         capture_output=True,
         text=True,
@@ -215,9 +250,28 @@ def clone_repository(claim: dict, target: Path, sink: LogSink, lease_lost: threa
     if result.returncode != 0:
         details = redact((result.stderr or "").strip(), token)
         raise RuntimeError(details[:1800] or "No se pudo clonar el repositorio.")
+    if pinned_commit is not None:
+        fetched = subprocess.run(["git", "-C", str(target), "-c", "credential.helper=", "-c", "core.hooksPath=/dev/null",
+                                  "fetch", "--quiet", "--depth", "1", "origin", pinned_commit],
+                                 env=env, capture_output=True, text=True, timeout=300, check=False)
+        if fetched.returncode != 0:
+            details = redact((fetched.stderr or "").strip(), token)
+            raise RuntimeError(details[:1800] or "No se pudo descargar el commit fijado para el despliegue.")
+        checkout = subprocess.run(["git", "-C", str(target), "-c", "core.hooksPath=/dev/null", "checkout", "--quiet", "--detach", "FETCH_HEAD"],
+                                  env=env, capture_output=True, text=True, timeout=60, check=False)
+        if checkout.returncode != 0:
+            details = redact((checkout.stderr or "").strip(), token)
+            raise RuntimeError(details[:1800] or "No se pudo preparar el commit fijado para el despliegue.")
     if lease_lost.is_set():
         raise RuntimeError("El worker perdió el lease de la ejecución.")
+    resolved = subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"], env=env, capture_output=True, text=True, timeout=15, check=False)
+    if resolved.returncode != 0 or not re.fullmatch(r"[a-f0-9]{40}", resolved.stdout.strip()):
+        raise RuntimeError("No se pudo confirmar el commit de origen del trabajo.")
+    commit_sha = resolved.stdout.strip()
+    if pinned_commit is not None and commit_sha != pinned_commit:
+        raise RuntimeError("GitHub preparó un commit distinto al fijado para esta ejecución.")
     sink.write("SYSTEM", "Repositorio preparado; la credencial de GitHub no se entrega a los contenedores de trabajo.\n")
+    return commit_sha
 
 
 def prepare_workspace_permissions(workspace: Path) -> None:
@@ -229,12 +283,13 @@ def prepare_workspace_permissions(workspace: Path) -> None:
 
 
 def container_args(image: str, network: str, workspace: Path, command: str, memory_mb: int, cpu_count: int,
-                  pids: int, secrets: dict[str, str]) -> list[str]:
+                  pids: int, secrets: dict[str, str], system_environment: dict[str, str]) -> list[str]:
     if not isinstance(image, str) or not IMAGE_PATTERN.fullmatch(image):
         raise ValueError("El trabajo usa una imagen de contenedor no válida.")
     if network not in {"none", "bridge"}:
         raise ValueError("La red del trabajo debe ser none o bridge.")
-    secret_env_args = [argument for name in sorted(secrets) for argument in ("--env", name)]
+    container_environment = {**secrets, **system_environment}
+    secret_env_args = [argument for name in sorted(container_environment) for argument in ("--env", name)]
     args = [
         "docker", "run", "--detach", "--pull=missing", "--label", "cdci.managed=true", "--network", network,
         "--memory", f"{memory_mb}m", "--cpus", str(cpu_count), "--pids-limit", str(pids),
@@ -249,10 +304,11 @@ def container_args(image: str, network: str, workspace: Path, command: str, memo
 
 def run_step(image: str, network: str, workspace: Path, command: str, sink: LogSink,
              lease_lost: threading.Event, timeout_seconds: int, memory_mb: int, cpu_count: int, pids: int,
-             secrets: dict[str, str]) -> tuple[bool, str]:
-    args = container_args(image, network, workspace, command, memory_mb, cpu_count, pids, secrets)
+             secrets: dict[str, str], system_environment: dict[str, str]) -> tuple[bool, str]:
+    args = container_args(image, network, workspace, command, memory_mb, cpu_count, pids, secrets, system_environment)
     process_environment = os.environ.copy()
     process_environment.update(secrets)
+    process_environment.update(system_environment)
     try:
         started = subprocess.run(args, capture_output=True, text=True, env=process_environment, timeout=300, check=False)
     except subprocess.TimeoutExpired:
@@ -386,7 +442,8 @@ def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost:
         with tempfile.TemporaryDirectory(prefix="run-", dir=os.getenv("CDCI_RUNNER_WORKDIR", "/work")) as temporary:
             root = Path(temporary).resolve()
             workspace = root / "source"
-            clone_repository(claim, workspace, sink, lease_lost)
+            commit_sha = clone_repository(claim, workspace, sink, lease_lost)
+            client.report_source(run_id, worker_id, commit_sha)
             prepare_workspace_permissions(workspace)
             if lease_lost.is_set():
                 raise RuntimeError("El worker perdió el lease de la ejecución.")
@@ -396,9 +453,18 @@ def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost:
             jobs = definition["jobs"]
             if len(jobs) > 20:
                 raise ValueError("El pipeline supera el máximo de trabajos.")
+            rollback_environment = claim.get("rollbackEnvironment")
+            rollback_deployed = False
             for job_id, job in jobs.items():
                 if not isinstance(job, dict) or not isinstance(job.get("steps"), list) or not job["steps"]:
                     raise ValueError(f"El trabajo {job_id} no contiene pasos válidos.")
+                deployment_environment = job.get("environment")
+                if deployment_environment is not None and (not isinstance(deployment_environment, str)
+                        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", deployment_environment)):
+                    raise ValueError(f"El entorno de despliegue del trabajo {job_id} no es válido.")
+                if rollback_environment and deployment_environment and deployment_environment.lower() != rollback_environment.lower():
+                    sink.write("SYSTEM", f"Se omite {job_id}: el rollback solo publica en {rollback_environment}.\n")
+                    continue
                 image = job.get("image", default_image)
                 network = job.get("network", "none")
                 if not isinstance(image, str) or not IMAGE_PATTERN.fullmatch(image) or network not in {"none", "bridge"}:
@@ -408,22 +474,78 @@ def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost:
                                                                   or name not in secrets for name in requested_secrets):
                     raise ValueError(f"Falta configurar uno o más secretos del trabajo {job_id}.")
                 job_secrets = {name: secrets[name] for name in requested_secrets}
+                system_environment = {
+                    "CDCI_COMMIT_SHA": commit_sha,
+                    "CDCI_ENVIRONMENT": deployment_environment or "",
+                    "CDCI_ROLLBACK": "true" if rollback_environment else "false",
+                }
+                deployment_id = None
+                deployment_started = False
+                if deployment_environment:
+                    deployment = client.request_deployment(run_id, worker_id, str(job_id), deployment_environment, commit_sha)
+                    deployment_id = str(deployment["id"])
+                    if deployment.get("status") == "WAITING_APPROVAL":
+                        sink.write("SYSTEM", f"El despliegue a {deployment_environment} espera aprobación de una persona mantenedora.\n")
+                    while deployment.get("status") == "WAITING_APPROVAL":
+                        if lease_lost.is_set():
+                            raise RuntimeError("El worker perdió el lease mientras esperaba aprobación del despliegue.")
+                        remaining = int(run_deadline - time.monotonic())
+                        if remaining <= 0:
+                            raise RuntimeError("Se agotó el tiempo de espera de aprobación del despliegue.")
+                        time.sleep(min(10, remaining))
+                        deployment = client.deployment_approval_status(run_id, deployment_id, worker_id)
+                        if deployment.get("rejected"):
+                            raise RuntimeError(f"El despliegue a {deployment_environment} fue rechazado.")
+                    if deployment.get("rejected"):
+                        raise RuntimeError(f"El despliegue a {deployment_environment} fue rechazado.")
+                    if not deployment.get("approved"):
+                        raise RuntimeError("El despliegue no recibió aprobación válida.")
+                    serialization_wait_logged = False
+                    while True:
+                        if lease_lost.is_set():
+                            raise RuntimeError("El worker perdió el lease mientras esperaba el turno de despliegue.")
+                        remaining = int(run_deadline - time.monotonic())
+                        if remaining <= 0:
+                            raise RuntimeError(f"Se agotó el tiempo para iniciar el despliegue a {deployment_environment}.")
+                        start_result = client.start_deployment(run_id, deployment_id, worker_id)
+                        if start_result.get("status") == "IN_PROGRESS":
+                            deployment_started = True
+                            break
+                        if not serialization_wait_logged:
+                            sink.write("SYSTEM", f"El entorno {deployment_environment} ya tiene un despliegue activo; CDCI conserva el orden.\n")
+                            serialization_wait_logged = True
+                        time.sleep(min(10, remaining))
+                    sink.write("SYSTEM", f"Aprobado: comienza el comando de despliegue a {deployment_environment}.\n")
                 sink.write("SYSTEM", f"Iniciando trabajo {job_id} en {image} · red {network}.\n")
-                for index, step in enumerate(job["steps"], start=1):
-                    if lease_lost.is_set():
-                        raise RuntimeError("El worker perdió el lease de la ejecución.")
-                    if not isinstance(step, dict) or not isinstance(step.get("run"), str) or not step["run"].strip():
-                        raise ValueError(f"El paso {index} del trabajo {job_id} no contiene un comando válido.")
-                    name = str(step.get("name") or f"Paso {index}")[:100]
-                    sink.write("SYSTEM", f"▶ {job_id} · {name}\n")
-                    remaining = int(run_deadline - time.monotonic())
-                    if remaining <= 0:
-                        raise RuntimeError(f"La ejecución superó el límite total de {run_timeout_seconds} segundos.")
-                    success, failure = run_step(image, network, workspace, step["run"], sink, lease_lost,
-                                                min(timeout_seconds, remaining), memory_mb, cpu_count, pids, job_secrets)
-                    if not success:
-                        raise RuntimeError(f"{job_id} · {name}: {failure}")
+                try:
+                    for index, step in enumerate(job["steps"], start=1):
+                        if lease_lost.is_set():
+                            raise RuntimeError("El worker perdió el lease de la ejecución.")
+                        if not isinstance(step, dict) or not isinstance(step.get("run"), str) or not step["run"].strip():
+                            raise ValueError(f"El paso {index} del trabajo {job_id} no contiene un comando válido.")
+                        name = str(step.get("name") or f"Paso {index}")[:100]
+                        sink.write("SYSTEM", f"▶ {job_id} · {name}\n")
+                        remaining = int(run_deadline - time.monotonic())
+                        if remaining <= 0:
+                            raise RuntimeError(f"La ejecución superó el límite total de {run_timeout_seconds} segundos.")
+                        success, failure = run_step(image, network, workspace, step["run"], sink, lease_lost,
+                                                    min(timeout_seconds, remaining), memory_mb, cpu_count, pids,
+                                                    job_secrets, system_environment)
+                        if not success:
+                            raise RuntimeError(f"{job_id} · {name}: {failure}")
+                except Exception:
+                    if deployment_started and deployment_id:
+                        try:
+                            client.complete_deployment(run_id, deployment_id, worker_id, False)
+                        except Exception:
+                            pass
+                    raise
+                if deployment_started and deployment_id:
+                    client.complete_deployment(run_id, deployment_id, worker_id, True)
+                    rollback_deployed = rollback_deployed or bool(rollback_environment)
                 sink.write("SYSTEM", f"✓ Trabajo {job_id} completado.\n")
+            if rollback_environment and not rollback_deployed:
+                raise RuntimeError(f"La definición no contiene un trabajo de despliegue para {rollback_environment}.")
         return True, ""
     except Exception as error:
         failure = redact(str(error), token, sink.secrets).strip() or "La ejecución no se pudo completar."

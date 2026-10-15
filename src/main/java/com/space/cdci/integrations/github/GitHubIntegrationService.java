@@ -190,6 +190,73 @@ public class GitHubIntegrationService {
 		return new RunnerRepositoryAccess(linked.getFullName(), "https://github.com/" + linked.getFullName() + ".git", accessToken(connection));
 	}
 
+	@Transactional
+	public GitHubDeployment createDeployment(UUID linkedRepositoryId, String pipelineRunId, String commitSha,
+			String environment, String description) {
+		var linked = linkedRepositories.findById(linkedRepositoryId).orElseThrow(() ->
+				new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontró el repositorio conectado."));
+		String[] ownerAndRepo = linked.getFullName().split("/", 2);
+		if (ownerAndRepo.length != 2 || !commitSha.matches("[a-f0-9]{40}")) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No se pudo fijar el repositorio y commit del despliegue.");
+		}
+		Map<String, Object> request = Map.of(
+			"ref", commitSha,
+			"task", "deploy",
+			"auto_merge", false,
+			"required_contexts", List.of(),
+			"environment", environment,
+			"description", description,
+			"transient_environment", false,
+			"production_environment", "production".equalsIgnoreCase(environment),
+			"payload", Map.of("cdci_pipeline_run_id", pipelineRunId)
+		);
+		String token = accessToken(linked.getGithubConnection());
+		try {
+			List<Map<String, Object>> existing = githubApi.get()
+				.uri(uri -> uri.path("/repos/{owner}/{repo}/deployments").queryParam("sha", commitSha)
+					.queryParam("environment", environment).queryParam("task", "deploy").queryParam("per_page", 100)
+					.build(ownerAndRepo[0], ownerAndRepo[1]))
+				.headers(headers -> setApiHeaders(headers, token))
+				.retrieve().body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+			if (existing != null) {
+				for (Map<String, Object> prior : existing) {
+					Object payload = prior.get("payload");
+					if (payload instanceof Map<?, ?> details && pipelineRunId.equals(details.get("cdci_pipeline_run_id"))
+							&& prior.get("id") instanceof Number deploymentId) {
+						return new GitHubDeployment(deploymentId.longValue(), optionalText(prior.get("html_url"), "https://github.com/" + linked.getFullName() + "/deployments"));
+					}
+				}
+			}
+			Map<String, Object> response = githubApi.post().uri("/repos/{owner}/{repo}/deployments", ownerAndRepo[0], ownerAndRepo[1])
+				.headers(headers -> setApiHeaders(headers, token))
+				.body(request).retrieve().body(new ParameterizedTypeReference<Map<String, Object>>() {});
+			if (response == null || !(response.get("id") instanceof Number deploymentId)) throw providerUnavailable();
+			return new GitHubDeployment(deploymentId.longValue(), optionalText(response.get("html_url"), "https://github.com/" + linked.getFullName() + "/deployments"));
+		} catch (RestClientResponseException exception) {
+			throw deploymentFailure(exception);
+		}
+	}
+
+	@Transactional
+	public void updateDeploymentStatus(UUID linkedRepositoryId, long deploymentId, String environment,
+			String state, String description, String logUrl) {
+		var linked = linkedRepositories.findById(linkedRepositoryId).orElseThrow(() ->
+				new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontró el repositorio conectado."));
+		String[] ownerAndRepo = linked.getFullName().split("/", 2);
+		if (ownerAndRepo.length != 2 || !List.of("in_progress", "success", "failure", "error").contains(state)) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "El estado del despliegue no es válido.");
+		}
+		Map<String, Object> request = Map.of("state", state, "environment", environment, "description", description,
+			"log_url", logUrl, "auto_inactive", false);
+		try {
+			githubApi.post().uri("/repos/{owner}/{repo}/deployments/{id}/statuses", ownerAndRepo[0], ownerAndRepo[1], deploymentId)
+				.headers(headers -> setApiHeaders(headers, accessToken(linked.getGithubConnection())))
+				.body(request).retrieve().toBodilessEntity();
+		} catch (RestClientResponseException exception) {
+			throw deploymentFailure(exception);
+		}
+	}
+
 	private Map<?, ?> exchangeCode(String code) {
 		try {
 			LinkedMultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -325,10 +392,17 @@ public class GitHubIntegrationService {
 		if (exception.getStatusCode().value() == 404) return new ResponseStatusException(HttpStatus.NOT_FOUND, "GitHub no muestra ese repositorio para la cuenta conectada.");
 		return providerUnavailable();
 	}
+	private static ResponseStatusException deploymentFailure(RestClientResponseException exception) {
+		if (exception.getStatusCode().value() == 401) return new ResponseStatusException(HttpStatus.UNAUTHORIZED, "GitHub rechazó la conexión. Vuelve a conectar tu cuenta.");
+		if (exception.getStatusCode().value() == 403) return new ResponseStatusException(HttpStatus.FORBIDDEN, "La GitHub App requiere Deployments: write aprobado en este repositorio.");
+		if (exception.getStatusCode().value() == 404) return new ResponseStatusException(HttpStatus.NOT_FOUND, "GitHub no muestra ese repositorio para la cuenta conectada.");
+		return providerUnavailable();
+	}
 	private static ResponseStatusException providerUnavailable() {
 		return new ResponseStatusException(HttpStatus.BAD_GATEWAY, "GitHub no respondió con una conexión válida. Inténtalo nuevamente.");
 	}
 
 	public record GitHubRepositoryData(GitHubConnection connection, ProjectDtos.RepositoryCatalogItem repository) {}
 	public record RunnerRepositoryAccess(String fullName, String cloneUrl, String accessToken) {}
+	public record GitHubDeployment(long id, String htmlUrl) {}
 }

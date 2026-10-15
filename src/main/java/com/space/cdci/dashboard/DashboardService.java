@@ -1,6 +1,8 @@
 package com.space.cdci.dashboard;
 
 import com.space.cdci.identity.CdciPrincipal;
+import com.space.cdci.pipelines.PipelineDeployment;
+import com.space.cdci.pipelines.PipelineDeploymentRepository;
 import com.space.cdci.pipelines.PipelineDefinitionRepository;
 import com.space.cdci.pipelines.PipelineRun;
 import com.space.cdci.pipelines.PipelineRunRepository;
@@ -28,11 +30,14 @@ public class DashboardService {
 	private final ProjectService projects;
 	private final PipelineDefinitionRepository pipelines;
 	private final PipelineRunRepository runs;
+	private final PipelineDeploymentRepository deployments;
 
-	public DashboardService(ProjectService projects, PipelineDefinitionRepository pipelines, PipelineRunRepository runs) {
+	public DashboardService(ProjectService projects, PipelineDefinitionRepository pipelines, PipelineRunRepository runs,
+			PipelineDeploymentRepository deployments) {
 		this.projects = projects;
 		this.pipelines = pipelines;
 		this.runs = runs;
+		this.deployments = deployments;
 	}
 
 	@Transactional(readOnly = true)
@@ -44,7 +49,7 @@ public class DashboardService {
 		Instant thirtyDaysAgo = now.toInstant().minus(Duration.ofDays(30));
 		List<DashboardDtos.DailyRuns> daily = dailyRuns(now.toLocalDate(), projectIds);
 		if (projectIds.isEmpty()) {
-			return new DashboardDtos.Summary(0, 0, 0, 0, 0, null, daily, List.of());
+			return new DashboardDtos.Summary(0, 0, 0, 0, 0, null, daily, List.of(), List.of());
 		}
 
 		long runsToday = runs.countByPipeline_Project_IdInAndRequestedAtGreaterThanEqual(projectIds, todayStart);
@@ -56,8 +61,10 @@ public class DashboardService {
 		Double median = runs.dashboardMedianDurationMillis(projectIds, thirtyDaysAgo);
 		List<DashboardDtos.RecentRun> recent = runs.findTop50ByPipeline_Project_IdInOrderByRequestedAtDesc(projectIds)
 				.stream().map(DashboardService::recentRun).toList();
+		List<DashboardDtos.RecentDeployment> recentDeployments = deployments.findTop20ByProject_IdInOrderByRequestedAtDesc(projectIds)
+				.stream().map(DashboardService::recentDeployment).toList();
 		return new DashboardDtos.Summary(visibleProjects.size(), pipelines.countByProject_IdIn(projectIds), runsToday,
-				activeRuns, successRate, median == null ? null : Math.round(median), daily, recent);
+				activeRuns, successRate, median == null ? null : Math.round(median), daily, recent, recentDeployments);
 	}
 
 	private List<DashboardDtos.DailyRuns> dailyRuns(LocalDate today, List<UUID> projectIds) {
@@ -86,5 +93,13 @@ public class DashboardService {
 			run.getPipeline().getProject().getName(), run.getPipeline().getName(), run.getPipeline().getRepository().getFullName(),
 			run.getBranchName(), run.getPipelineVersion().getVersionNumber(), run.getStatus().name(),
 			run.getRequestedBy().getEmail(), run.getRequestedAt(), run.getStartedAt(), run.getCompletedAt(), duration);
+	}
+
+	private static DashboardDtos.RecentDeployment recentDeployment(PipelineDeployment deployment) {
+		var run = deployment.getPipelineRun();
+		return new DashboardDtos.RecentDeployment(deployment.getId(), deployment.getProject().getId(), run.getId(),
+				deployment.getProject().getName(), run.getPipeline().getName(), run.getPipeline().getRepository().getFullName(),
+				deployment.getEnvironmentName(), deployment.getSourceCommitSha(), deployment.getStatus().name(),
+				deployment.getRequestedAt(), deployment.getGithubHtmlUrl());
 	}
 }

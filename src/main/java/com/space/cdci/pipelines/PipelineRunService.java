@@ -33,13 +33,14 @@ public class PipelineRunService {
 	private final GitHubIntegrationService github;
 	private final ProjectSecretService projectSecrets;
 	private final PipelineYamlValidator yamlValidator;
+	private final PipelineDeploymentService deployments;
 	private final int retentionDays;
 	private final java.util.regex.Pattern credentialPattern = java.util.regex.Pattern.compile("(?i)(ghu_[a-z0-9_]{20,}|github_pat_[a-z0-9_]{20,}|gh[pousr]_[a-z0-9]{20,})");
 
 	public PipelineRunService(PipelineDefinitionRepository pipelines, PipelineVersionRepository versions, PipelineRunRepository runs,
 			PipelineRunLogRepository logs, UserRepository users, ProjectAccessService access, AccessAuditService audit,
 			GitHubIntegrationService github, ProjectSecretService projectSecrets, PipelineYamlValidator yamlValidator,
-			@Value("${cdci.runner.retention-days:90}") int retentionDays) {
+			PipelineDeploymentService deployments, @Value("${cdci.runner.retention-days:90}") int retentionDays) {
 		this.pipelines = pipelines;
 		this.versions = versions;
 		this.runs = runs;
@@ -50,6 +51,7 @@ public class PipelineRunService {
 		this.github = github;
 		this.projectSecrets = projectSecrets;
 		this.yamlValidator = yamlValidator;
+		this.deployments = deployments;
 		this.retentionDays = Math.max(1, Math.min(retentionDays, 400));
 	}
 
@@ -99,11 +101,12 @@ public class PipelineRunService {
 		try {
 			var sourceAccess = github.runnerAccess(repository.getId());
 			var resolvedSecrets = projectSecrets.resolveForWorker(repository.getProject().getId(),
-				yamlValidator.referencedSecrets(run.getPipelineVersion().getYamlDefinition()));
+				yamlValidator.referencedSecrets(run.getPipelineVersion().getYamlDefinition(), run.getRollbackEnvironment()));
 		logs.save(new PipelineRunLog(run, "SYSTEM", "Worker " + safeWorkerId(workerId) + " inició la ejecución."));
 		return new PipelineDtos.WorkerClaim(run.getId(), run.getPipeline().getId(), run.getPipeline().getName(),
 			run.getPipelineVersion().getVersionNumber(), run.getBranchName(), sourceAccess.fullName(), sourceAccess.cloneUrl(),
-			sourceAccess.accessToken(), resolvedSecrets, run.getPipelineVersion().getYamlDefinition(), run.getStartedAt());
+			sourceAccess.accessToken(), resolvedSecrets, run.getSourceCommitSha(), run.getRollbackEnvironment(),
+			run.getPipelineVersion().getYamlDefinition(), run.getStartedAt());
 		} catch (ResponseStatusException exception) {
 			String reason = exception.getReason() == null ? "No se pudo preparar el acceso del worker." : exception.getReason();
 			run.complete(false, reason);
@@ -113,6 +116,17 @@ public class PipelineRunService {
 			run.complete(false, "No se pudieron preparar las credenciales de GitHub y los secretos requeridos.");
 			logs.save(new PipelineRunLog(run, "SYSTEM", "La ejecución falló durante la preparación de credenciales."));
 			return null;
+		}
+	}
+
+	@Transactional
+	public void pinWorkerSource(UUID runId, PipelineDtos.WorkerSourceRequest request) {
+		PipelineRun run = runs.findById(runId).orElseThrow(PipelineRunService::notFound);
+		requireWorker(run, request.workerId());
+		try {
+			run.pinSourceCommit(request.commitSha());
+		} catch (IllegalStateException | IllegalArgumentException exception) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "El commit de origen no coincide con esta ejecución.");
 		}
 	}
 
@@ -138,6 +152,7 @@ public class PipelineRunService {
 		boolean succeeded = "SUCCEEDED".equals(request.status());
 		String failure = succeeded ? null : redact(request.failureMessage() == null || request.failureMessage().isBlank() ? "El worker reportó una falla." : request.failureMessage().trim());
 		run.complete(succeeded, failure);
+		if (!succeeded) deployments.failActive(runId);
 		logs.save(new PipelineRunLog(run, "SYSTEM", succeeded ? "El worker finalizó la ejecución correctamente." : "El worker marcó la ejecución como fallida."));
 		return summary(run);
 	}
@@ -148,6 +163,7 @@ public class PipelineRunService {
 		List<PipelineRun> expired = runs.findAllByStatusAndLeaseExpiresAtBefore(PipelineRunStatus.RUNNING, Instant.now());
 		for (PipelineRun run : expired) {
 			run.failAfterLeaseExpiry();
+			deployments.failActive(run.getId());
 			logs.save(new PipelineRunLog(run, "SYSTEM", "La ejecución falló porque el worker dejó de reportar actividad."));
 		}
 	}
@@ -165,7 +181,7 @@ public class PipelineRunService {
 		return runs.findByIdAndPipeline_Project_Id(runId, projectId).orElseThrow(PipelineRunService::notFound);
 	}
 	private UserAccount user(UUID id) { return users.findById(id).orElseThrow(PipelineRunService::notFound); }
-	private static PipelineDtos.RunSummary summary(PipelineRun run) {
+	static PipelineDtos.RunSummary summary(PipelineRun run) {
 		return new PipelineDtos.RunSummary(run.getId(), run.getPipeline().getId(), run.getPipeline().getName(), run.getPipelineVersion().getVersionNumber(),
 			run.getBranchName(), run.getTriggerType(), run.getStatus().name(), run.getRequestedBy().getEmail(), run.getRequestedAt(),
 			run.getStartedAt(), run.getCompletedAt(), run.getFailureMessage());
@@ -176,7 +192,8 @@ public class PipelineRunService {
 		return true;
 	}
 	private static void requireWorker(PipelineRun run, String workerId) {
-		if (run.getStatus() != PipelineRunStatus.RUNNING || !workerId.equals(run.getClaimedByWorkerId())) {
+		if (run.getStatus() != PipelineRunStatus.RUNNING || !workerId.equals(run.getClaimedByWorkerId())
+				|| run.getLeaseExpiresAt() == null || !run.getLeaseExpiresAt().isAfter(Instant.now())) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT, "La ejecución no está activa para este worker.");
 		}
 	}

@@ -67,10 +67,10 @@ La API permite crear/editar/archivar proyectos, administrar miembros con acceso 
 
 `GET /api/dashboard` entrega métricas y hasta 50 ejecuciones recientes únicamente de los proyectos visibles para la sesión. Las métricas de día usan `America/La_Paz`; la tasa de éxito y la mediana usan runs terminados de los últimos 30 días.
 
-La primera integración usa una **GitHub App** y tokens de usuario con permisos de lectura de metadatos y contenidos. No uses un personal access token. Configúrala así:
+La integración usa una **GitHub App** y tokens de usuario con permisos de lectura de metadatos/contenidos y escritura de estados de despliegue. No uses personal access tokens para conectar repositorios. Configúrala así:
 
 1. Registra la App y agrega `CDCI_GITHUB_CALLBACK_URL` como callback del flujo web OAuth. Activa tokens de usuario expirables y autoriza `offline_access` para permitir renovación.
-2. Concede permisos de repositorio `Metadata: read-only` y `Contents: read-only`; instala la App en la cuenta u organización y repositorios que se usarán.
+2. Concede permisos de repositorio `Metadata: read-only`, `Contents: read-only` y `Deployments: read and write`; instala la App en la cuenta u organización y repositorios que se usarán. El administrador de la instalación debe aprobar el permiso nuevo; las cuentas CDCI conectadas deben volver a autorizar GitHub para recibirlo.
 3. Copia su Client ID y Client Secret al entorno del backend. El Client ID es el de la App; no es el App ID.
 4. Genera `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` con PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Guárdala en el gestor de secretos del entorno. La misma clave debe mantenerse para poder leer conexiones existentes; perderla requiere reconectar GitHub.
 5. Conecta desde `/projects`. Desvincula todos los repositorios antes de desconectar la cuenta; CDCI revoca el grant de GitHub al hacerlo.
@@ -110,10 +110,40 @@ Los mantenedores del proyecto pueden crear, reemplazar y eliminar secretos en **
 - `GET /api/projects/{projectId}/pipelines/{pipelineId}/versions` y `.../versions/{number}` consultan historial y contenido.
 - `DELETE /api/projects/{projectId}/pipelines/{pipelineId}` elimina definición e historial.
 
-Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `POST /runs/{id}/logs`, `POST /runs/{id}/heartbeat` y `POST /runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. Claim responde `204` si la cola está vacía; si hay trabajo entrega la definición, el repositorio y el token GitHub de lectura al worker autenticado. Ese token solo se usa durante el checkout y nunca se monta ni se pasa al contenedor o al comando del pipeline. Leases renuevan el worker activo y cierran como fallidas las ejecuciones cuyo worker deja de reportar.
+Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `/runs/{id}/source`, `/runs/{id}/logs`, `/runs/{id}/heartbeat`, `/runs/{id}/deployments` y `/runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. Claim responde `204` si la cola está vacía; si hay trabajo entrega la definición, el repositorio y el token GitHub de lectura al worker autenticado. Ese token solo se usa durante el checkout y nunca se monta ni se pasa al contenedor o al comando del pipeline. Leases renuevan el worker activo y cierran como fallidas las ejecuciones cuyo worker deja de reportar.
 
 Para desarrollo, configura el mismo `CDCI_RUNNER_TOKEN` para el backend y `cdci_back/.env`, luego inicia el worker: `docker compose --profile runner up --build -d runner`. El perfil levanta un daemon Docker-in-Docker privado para jobs efímeros; cada paso corre como UID no root, sin capacidades Linux, con filesystem base de solo lectura, límite de memoria/CPU/PIDs y timeout. La red del job es `none` por defecto; `bridge` permite egress irrestricto. Usa esta modalidad en una máquina Linux dedicada al runner, no junto a servicios de producción: ejecutar código de repositorio sigue siendo una frontera de seguridad. El perfil no publica puertos del daemon Docker. En producción usa `CDCI_RUNNER_API_URL` con HTTPS/TLS; el valor `host.docker.internal` es para desarrollo local.
 
-Los campos `triggers` permiten solo ejecuciones manuales. No se suben artefactos y todavía no se implementa un destino de despliegue. Los runs terminales y sus logs se purgan después de 90 días.
+### Despliegue por entorno y rollback
+
+Agrega `environment` a un trabajo para que CDCI registre el ciclo en GitHub Deployments y ejecute los pasos YAML en el runner:
+
+```yaml
+deploy-staging:
+  image: alpine:3.22
+  network: bridge
+  environment: staging
+  secrets: [STAGING_DEPLOY_TOKEN]
+  steps:
+    - name: Publicar en staging
+      run: ./deploy.sh staging "$CDCI_COMMIT_SHA"
+
+deploy-production:
+  image: alpine:3.22
+  network: bridge
+  environment: production
+  secrets: [PRODUCTION_DEPLOY_TOKEN]
+  steps:
+    - name: Publicar en production
+      run: ./deploy.sh production "$CDCI_COMMIT_SHA"
+```
+
+Los trabajos se procesan en el orden YAML. Staging queda aprobado automáticamente; production espera la decisión de OWNER/MAINTAINER/admin en CDCI y quien solicitó la ejecución no puede aprobarla. El inicio del deploy crea un Deployment y estado `in_progress` en GitHub; al terminar se envía `success` o `failure`. CDCI serializa trabajos activos por repositorio y entorno. `CDCI_COMMIT_SHA`, `CDCI_ENVIRONMENT` y `CDCI_ROLLBACK` se entregan al contenedor de cada job. El proyecto debe configurar los comandos y credenciales de destino como pasos/secretos propios; CDCI no aprovisiona servidores ni hace build/push automático a GHCR.
+
+Desde el historial del proyecto, una persona mantenedora puede encolar rollback de un despliegue exitoso. CDCI usa el SHA inmutable registrado, el mismo snapshot de pipeline y la rama original; production vuelve a esperar aprobación. GitHub registra estados y enlaza al historial de CDCI.
+
+Endpoints de usuario: `GET /api/projects/{projectId}/deployments`, `POST .../{deploymentId}/approve`, `POST .../{deploymentId}/reject` y `POST .../{deploymentId}/rollback`. La pantalla muestra hasta 100 despliegues por proyecto y el dashboard hasta 20 despliegues recientes de proyectos visibles. Runs terminales, logs y despliegues asociados se purgan después de 90 días.
+
+Los campos `triggers` permiten solo ejecuciones manuales. Artefactos y build/push genérico a GHCR quedan fuera de esta iteración.
 
 Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).

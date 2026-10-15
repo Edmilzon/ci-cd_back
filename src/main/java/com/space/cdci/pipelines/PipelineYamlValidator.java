@@ -14,7 +14,7 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 @Component
 public class PipelineYamlValidator {
 	private static final Set<String> ROOT_KEYS = Set.of("name", "triggers", "jobs");
-	private static final Set<String> JOB_KEYS = Set.of("name", "image", "network", "secrets", "steps");
+	private static final Set<String> JOB_KEYS = Set.of("name", "image", "network", "secrets", "environment", "steps");
 	private static final Set<String> STEP_KEYS = Set.of("name", "run");
 	private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile("[A-Z_][A-Z0-9_]{0,99}");
 
@@ -80,6 +80,9 @@ public class PipelineYamlValidator {
 				if (job.containsKey("network") && !"none".equals(network) && !"bridge".equals(network)) {
 					errors.add("La red del trabajo " + jobId + " debe ser none o bridge.");
 				}
+				if (job.containsKey("environment") && !validEnvironment(string(job.get("environment")))) {
+					errors.add("El entorno del trabajo " + jobId + " debe usar letras, números, guion o guion bajo (máximo 64 caracteres).");
+				}
 				validateSecrets(job, jobId, errors);
 				Object stepsValue = job.get("steps");
 				if (!(stepsValue instanceof List<?> steps) || steps.isEmpty()) {
@@ -107,11 +110,17 @@ public class PipelineYamlValidator {
 	}
 
 	public List<String> referencedSecrets(String source) {
+		return referencedSecrets(source, null);
+	}
+
+	public List<String> referencedSecrets(String source, String onlyEnvironment) {
 		try {
 			Object document = safeYaml().load(source);
 			if (!(document instanceof Map<?, ?> root) || !(root.get("jobs") instanceof Map<?, ?> jobs)) return List.of();
 			Set<String> names = new LinkedHashSet<>();
 			for (Object value : jobs.values()) {
+				if (value instanceof Map<?, ?> job && onlyEnvironment != null && job.get("environment") instanceof String environment
+						&& !onlyEnvironment.equalsIgnoreCase(environment)) continue;
 				if (value instanceof Map<?, ?> job && job.get("secrets") instanceof List<?> references) {
 					for (Object reference : references) if (reference instanceof String name && validSecretName(name)) names.add(name);
 				}
@@ -145,6 +154,10 @@ public class PipelineYamlValidator {
 				&& !name.startsWith("CDCI_") && !name.startsWith("DOCKER_") && !name.startsWith("GIT_")
 				&& !name.startsWith("LD_") && !name.startsWith("DYLD_") && !name.startsWith("BASH_")
 				&& !name.startsWith("PYTHON") && !name.startsWith("SSH_") && !name.startsWith("SUDO_");
+	}
+
+	private static boolean validEnvironment(String name) {
+		return name != null && name.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,63}");
 	}
 
 	private static Yaml safeYaml() {
