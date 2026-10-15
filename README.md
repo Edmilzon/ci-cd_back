@@ -80,6 +80,8 @@ La integración usa una **GitHub App** y tokens de usuario con permisos de lectu
 
 El callback externo conserva la sesión CDCI del navegador. En producción, registra exactamente la URL HTTPS publicada y configura cookie `Secure`; si el frontend y la API están en sitios distintos, usa `SameSite=None` y HTTPS.
 
+Los mantenedores pueden revisar la preparación de cada repositorio desde el detalle del proyecto. `POST /api/projects/{projectId}/repositories/{repositoryId}/readiness` valida acceso a metadatos, estado del repositorio, rama predeterminada y el indicador de rama protegida; también informa las políticas de CDCI y permisos todavía no confirmados. Cada intento queda en la actividad/auditoría del proyecto para medir uso real. GitHub expone el estado `protected` en la consulta de rama con `Contents: read` ([Get a branch](https://docs.github.com/en/rest/branches/branches#get-a-branch)); para ver las reglas detalladas de protección se requiere `Administration: read` ([Get branch protection](https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection)), que no se solicita en la integración v1. `Deployments: write` se valida al crear el primer despliegue, ya que la revisión manual no genera cambios en GitHub.
+
 ## Pipelines YAML
 
 Cada pipeline pertenece a un proyecto y a uno de sus repositorios conectados. CDCI valida la definición antes de guardarla y conserva cada cambio como una versión inmutable en PostgreSQL. El borrado de un pipeline elimina también su historial; un repositorio no se puede desconectar mientras tenga pipelines asociados.

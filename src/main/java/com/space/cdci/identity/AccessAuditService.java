@@ -11,6 +11,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @Service
 public class AccessAuditService {
@@ -30,6 +31,11 @@ public class AccessAuditService {
 
 	@Transactional
 	public void recordProject(UUID projectId, String actor, String action, String targetType, String targetId, String summary) {
+		events.save(new AccessAuditEvent(projectId, actor, action, targetType, targetId, summary));
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void recordProjectObservation(UUID projectId, String actor, String action, String targetType, String targetId, String summary) {
 		events.save(new AccessAuditEvent(projectId, actor, action, targetType, targetId, summary));
 	}
 

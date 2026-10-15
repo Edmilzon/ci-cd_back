@@ -92,6 +92,12 @@ public class ProjectController {
 		return projects.addRepository(projectId, request, actor);
 	}
 
+	@PostMapping("/{projectId}/repositories/{repositoryId}/readiness")
+	public ProjectDtos.RepositoryReadiness repositoryReadiness(@PathVariable UUID projectId, @PathVariable UUID repositoryId,
+			@AuthenticationPrincipal CdciPrincipal actor) {
+		return projects.checkRepositoryReadiness(projectId, repositoryId, actor);
+	}
+
 	@DeleteMapping("/{projectId}/repositories/{repositoryId}")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void removeRepository(@PathVariable UUID projectId, @PathVariable UUID repositoryId, @AuthenticationPrincipal CdciPrincipal actor) { projects.removeRepository(projectId, repositoryId, actor); }

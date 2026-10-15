@@ -4,6 +4,7 @@ import com.space.cdci.identity.AccessAuditService;
 import com.space.cdci.identity.CdciPrincipal;
 import com.space.cdci.identity.UserAccount;
 import com.space.cdci.identity.UserRepository;
+import com.space.cdci.projects.LinkedRepository;
 import com.space.cdci.projects.LinkedRepositoryRepository;
 import com.space.cdci.projects.ProjectDtos;
 import jakarta.servlet.http.HttpSession;
@@ -180,6 +181,91 @@ public class GitHubIntegrationService {
 		} catch (RestClientResponseException exception) {
 			throw providerFailure(exception);
 		}
+	}
+
+	@Transactional
+	public ProjectDtos.RepositoryReadiness checkReadiness(LinkedRepository linked) {
+		List<ProjectDtos.RepositoryReadinessCheck> checks = new ArrayList<>();
+		String token = accessToken(linked.getGithubConnection());
+		Map<String, Object> remoteRepository;
+		try {
+			remoteRepository = githubApi.get().uri("/repositories/{id}", linked.getGithubRepositoryId())
+					.headers(headers -> setApiHeaders(headers, token))
+					.retrieve().body(new ParameterizedTypeReference<Map<String, Object>>() {});
+		} catch (RestClientResponseException exception) {
+			throw providerFailure(exception);
+		}
+		if (remoteRepository == null || number(remoteRepository.get("id"), "id") != linked.getGithubRepositoryId()) {
+			throw providerUnavailable();
+		}
+		String remoteName = optionalText(remoteRepository.get("full_name"), linked.getFullName());
+		String remoteDefaultBranch = optionalString(remoteRepository.get("default_branch"));
+		checks.add(check("repository_access", "PASS", "Repositorio accesible", "GitHub respondió para " + remoteName + " con la cuenta conectada."));
+		if (Boolean.TRUE.equals(remoteRepository.get("archived")) || Boolean.TRUE.equals(remoteRepository.get("disabled"))) {
+			checks.add(check("repository_state", "WARNING", "Repositorio no operativo", "GitHub marca el repositorio como archivado o deshabilitado."));
+		} else {
+			checks.add(check("repository_state", "PASS", "Repositorio activo", "GitHub no marca el repositorio como archivado ni deshabilitado."));
+		}
+		if (remoteDefaultBranch == null) {
+			checks.add(check("default_branch", "WARNING", "Rama principal pendiente", "GitHub no informa una rama principal; el repositorio puede estar vacío."));
+		} else if (!remoteDefaultBranch.equals(linked.getDefaultBranch())) {
+			checks.add(check("default_branch", "WARNING", "Rama principal cambió", "En CDCI figura “" + linked.getDefaultBranch() + "” y GitHub informa “" + remoteDefaultBranch + "”. Desconecta y vuelve a conectar el repositorio para actualizarlo."));
+		} else {
+			checks.add(check("default_branch", "PASS", "Rama principal sincronizada", "La rama “" + remoteDefaultBranch + "” coincide con la configuración conectada en CDCI."));
+		}
+
+		if (remoteDefaultBranch != null) {
+			String[] ownerAndRepo = remoteName.split("/", 2);
+			if (ownerAndRepo.length != 2) {
+				checks.add(check("branch_access", "NOT_VERIFIED", "Rama principal no verificada", "GitHub devolvió un nombre de repositorio que CDCI no puede interpretar."));
+				checks.add(check("branch_protection", "NOT_VERIFIED", "Protección no verificada", "No se pudo identificar el repositorio en GitHub."));
+			} else {
+				try {
+					URI branchUri = UriComponentsBuilder.fromPath("/repos/{owner}/{repo}/branches/{branch}")
+							.encode().buildAndExpand(ownerAndRepo[0], ownerAndRepo[1], remoteDefaultBranch).toUri();
+					Map<String, Object> branch = githubApi.get().uri(branchUri)
+							.headers(headers -> setApiHeaders(headers, token))
+							.retrieve().body(new ParameterizedTypeReference<Map<String, Object>>() {});
+					if (branch == null) {
+						checks.add(check("branch_access", "NOT_VERIFIED", "Rama no verificada", "GitHub no devolvió detalles de la rama principal."));
+					} else {
+						checks.add(check("branch_access", "PASS", "Rama principal disponible", "GitHub confirma que “" + remoteDefaultBranch + "” existe y puede leerse."));
+						if (Boolean.TRUE.equals(branch.get("protected"))) {
+							checks.add(check("branch_protection", "PASS", "Protección de rama detectada", "GitHub marca la rama principal como protegida por reglas o rulesets."));
+						} else if (Boolean.FALSE.equals(branch.get("protected"))) {
+							checks.add(check("branch_protection", "WARNING", "Rama sin protección detectada", "Activa protección de rama o un ruleset en GitHub antes de usarla para releases."));
+						} else {
+							checks.add(check("branch_protection", "NOT_VERIFIED", "Protección no verificada", "GitHub no informó si la rama tiene protección."));
+						}
+					}
+				} catch (RestClientResponseException exception) {
+					if (exception.getStatusCode().value() == 404) {
+						checks.add(check("branch_access", "WARNING", "Rama principal no disponible", "GitHub no encontró esa rama; revisa si el repositorio está vacío o cambió su rama predeterminada."));
+						checks.add(check("branch_protection", "NOT_VERIFIED", "Protección no verificada", "No hay una rama disponible para consultar sus reglas."));
+					} else if (exception.getStatusCode().value() == 401) {
+						throw providerFailure(exception);
+					} else if (exception.getStatusCode().value() == 403) {
+						checks.add(check("branch_access", "NOT_VERIFIED", "Lectura de rama no confirmada", "GitHub rechazó la consulta. Revisa permiso Contents: read, acceso de la cuenta y límites de API."));
+						checks.add(check("branch_protection", "NOT_VERIFIED", "Protección no verificada", "No se pudieron consultar los detalles de la rama."));
+					} else {
+						throw providerUnavailable();
+					}
+				}
+			}
+		} else {
+			checks.add(check("branch_access", "NOT_VERIFIED", "Rama principal no verificada", "Se necesita una rama predeterminada para comprobar su acceso."));
+			checks.add(check("branch_protection", "NOT_VERIFIED", "Protección no verificada", "Se necesita una rama predeterminada para consultar su protección."));
+		}
+		checks.add(check("branch_policy_details", "NOT_VERIFIED", "Reglas detalladas de GitHub", "La integración no tiene Administration: read para confirmar revisiones requeridas y checks obligatorios."));
+
+		checks.add(check("manual_triggers", "PASS", "Ejecuciones manuales", "CDCI solo permite disparadores manuales en la versión actual."));
+		checks.add(check("production_approval", "PASS", "Aprobación de production", "CDCI exige que una persona distinta de quien solicitó el despliegue apruebe production."));
+		checks.add(check("deployment_permission", "NOT_VERIFIED", "Permiso de despliegue", "GitHub confirma Deployments: write cuando CDCI crea el primer despliegue; esta revisión no modifica el repositorio."));
+		return new ProjectDtos.RepositoryReadiness(Instant.now(), remoteName, checks);
+	}
+
+	private static ProjectDtos.RepositoryReadinessCheck check(String code, String status, String title, String detail) {
+		return new ProjectDtos.RepositoryReadinessCheck(code, status, title, detail);
 	}
 
 	@Transactional

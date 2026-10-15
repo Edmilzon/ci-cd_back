@@ -153,6 +153,25 @@ public class ProjectService {
 	}
 
 	@Transactional
+	public ProjectDtos.RepositoryReadiness checkRepositoryReadiness(UUID projectId, UUID repositoryId, CdciPrincipal actor) {
+		access.requireManage(projectId, actor);
+		LinkedRepository linked = repositories.findByIdAndProject_Id(repositoryId, projectId).orElseThrow(ProjectService::notFound);
+		ProjectDtos.RepositoryReadiness readiness;
+		try {
+			readiness = github.checkReadiness(linked);
+		} catch (RuntimeException exception) {
+			audit.recordProjectObservation(projectId, actor.email(), "GITHUB_REPOSITORY_READINESS_FAILED", "PROJECT_REPOSITORY", repositoryId.toString(),
+				"No se pudo completar la revisión de GitHub para " + linked.getFullName() + ".");
+			throw exception;
+		}
+		long warnings = readiness.checks().stream().filter(item -> "WARNING".equals(item.status())).count();
+		long unverified = readiness.checks().stream().filter(item -> "NOT_VERIFIED".equals(item.status())).count();
+		audit.recordProjectObservation(projectId, actor.email(), "GITHUB_REPOSITORY_READINESS_CHECKED", "PROJECT_REPOSITORY", repositoryId.toString(),
+			"Revisó " + readiness.repositoryName() + ": " + warnings + " advertencias y " + unverified + " políticas sin verificar.");
+		return readiness;
+	}
+
+	@Transactional
 	public ProjectDtos.RepositorySummary addRepository(UUID projectId, ProjectDtos.AddRepositoryRequest request, CdciPrincipal actor) {
 		Project project = access.requireManage(projectId, actor);
 		if (repositories.existsByProject_IdAndGithubRepositoryId(projectId, request.githubRepositoryId())) {

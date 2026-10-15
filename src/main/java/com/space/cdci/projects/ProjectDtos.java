@@ -26,6 +26,8 @@ public final class ProjectDtos {
 	public record ProjectMemberSummary(UUID userId, String fullName, String email, String accessLevel, Instant addedAt) {}
 	public record RepositorySummary(UUID id, long githubRepositoryId, String fullName, String htmlUrl,
 			String defaultBranch, boolean privateRepository, String description, String githubLogin, Instant createdAt) {}
+	public record RepositoryReadiness(Instant checkedAt, String repositoryName, List<RepositoryReadinessCheck> checks) {}
+	public record RepositoryReadinessCheck(String code, String status, String title, String detail) {}
 	public record RepositoryCatalogItem(long id, String fullName, String htmlUrl, String defaultBranch,
 			boolean privateRepository, String description, String language, Instant pushedAt) {}
 	public record GitHubConnectionStatus(boolean connected, String githubLogin, Instant accessTokenExpiresAt) {}
