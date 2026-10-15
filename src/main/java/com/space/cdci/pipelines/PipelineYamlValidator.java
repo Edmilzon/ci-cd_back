@@ -13,7 +13,7 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 @Component
 public class PipelineYamlValidator {
 	private static final Set<String> ROOT_KEYS = Set.of("name", "triggers", "jobs");
-	private static final Set<String> JOB_KEYS = Set.of("name", "steps");
+	private static final Set<String> JOB_KEYS = Set.of("name", "image", "network", "steps");
 	private static final Set<String> STEP_KEYS = Set.of("name", "run");
 
 	public PipelineDtos.ValidationResult validate(String source) {
@@ -44,12 +44,11 @@ public class PipelineYamlValidator {
 
 		Object triggerValue = root.get("triggers");
 		if (!(triggerValue instanceof List<?> triggers) || triggers.isEmpty()) {
-			errors.add("triggers debe incluir al menos un evento (push, pull_request o manual).");
+			errors.add("triggers debe contener manual; los disparadores automáticos no están habilitados en v1.");
 		} else {
-			Set<String> allowed = Set.of("push", "pull_request", "manual");
 			for (Object trigger : triggers) {
-				if (!(trigger instanceof String item) || !allowed.contains(item)) {
-					errors.add("Evento no permitido en triggers. Opciones: push, pull_request y manual.");
+				if (!"manual".equals(trigger)) {
+					errors.add("Solo se admite el disparador manual en v1; push y pull_request aún no están habilitados.");
 					break;
 				}
 			}
@@ -76,6 +75,13 @@ public class PipelineYamlValidator {
 				checkKeys(job, JOB_KEYS, "trabajo " + jobId, errors);
 				if (job.containsKey("name") && (string(job.get("name")) == null || string(job.get("name")).length() > 100)) {
 					errors.add("El nombre del trabajo " + jobId + " debe tener hasta 100 caracteres.");
+				}
+				if (job.containsKey("image") && !validImage(string(job.get("image")))) {
+					errors.add("La imagen del trabajo " + jobId + " no tiene un nombre de imagen de contenedor válido.");
+				}
+				String network = string(job.get("network"));
+				if (job.containsKey("network") && !"none".equals(network) && !"bridge".equals(network)) {
+					errors.add("La red del trabajo " + jobId + " debe ser none o bridge.");
 				}
 				Object stepsValue = job.get("steps");
 				if (!(stepsValue instanceof List<?> steps) || steps.isEmpty()) {
@@ -107,5 +113,8 @@ public class PipelineYamlValidator {
 	}
 
 	private static String string(Object value) { return value instanceof String text ? text : null; }
+	private static boolean validImage(String image) {
+		return image != null && image.length() <= 255 && image.matches("(?:[a-z0-9.-]+(?::[0-9]{1,5})?/)?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?");
+	}
 	private static PipelineDtos.ValidationResult invalid(String message) { return new PipelineDtos.ValidationResult(false, null, 0, 0, List.of(message)); }
 }

@@ -8,17 +8,20 @@ import com.space.cdci.integrations.github.GitHubIntegrationService;
 import com.space.cdci.projects.Project;
 import com.space.cdci.projects.ProjectAccessService;
 import jakarta.validation.Valid;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class PipelineRunService {
-	private static final Pattern SAFE_REF = Pattern.compile("[A-Za-z0-9._/-]{1,255}");
+	private static final Pattern SAFE_REF = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._/-]{0,254}");
 	private final PipelineDefinitionRepository pipelines;
 	private final PipelineVersionRepository versions;
 	private final PipelineRunRepository runs;
@@ -27,11 +30,12 @@ public class PipelineRunService {
 	private final ProjectAccessService access;
 	private final AccessAuditService audit;
 	private final GitHubIntegrationService github;
+	private final int retentionDays;
 	private final java.util.regex.Pattern credentialPattern = java.util.regex.Pattern.compile("(?i)(ghu_[a-z0-9_]{20,}|github_pat_[a-z0-9_]{20,}|gh[pousr]_[a-z0-9]{20,})");
 
 	public PipelineRunService(PipelineDefinitionRepository pipelines, PipelineVersionRepository versions, PipelineRunRepository runs,
 			PipelineRunLogRepository logs, UserRepository users, ProjectAccessService access, AccessAuditService audit,
-			GitHubIntegrationService github) {
+			GitHubIntegrationService github, @Value("${cdci.runner.retention-days:90}") int retentionDays) {
 		this.pipelines = pipelines;
 		this.versions = versions;
 		this.runs = runs;
@@ -40,6 +44,7 @@ public class PipelineRunService {
 		this.access = access;
 		this.audit = audit;
 		this.github = github;
+		this.retentionDays = Math.max(1, Math.min(retentionDays, 400));
 	}
 
 	@Transactional
@@ -85,7 +90,7 @@ public class PipelineRunService {
 		if (run == null) return null;
 		var repository = run.getPipeline().getRepository();
 		var sourceAccess = github.runnerAccess(repository.getId());
-		run.claim();
+		run.claim(workerId);
 		logs.save(new PipelineRunLog(run, "SYSTEM", "Worker " + safeWorkerId(workerId) + " inició la ejecución."));
 		return new PipelineDtos.WorkerClaim(run.getId(), run.getPipeline().getId(), run.getPipeline().getName(),
 			run.getPipelineVersion().getVersionNumber(), run.getBranchName(), sourceAccess.fullName(), sourceAccess.cloneUrl(),
@@ -95,20 +100,43 @@ public class PipelineRunService {
 	@Transactional
 	public void appendWorkerLog(UUID runId, PipelineDtos.WorkerLogRequest request) {
 		PipelineRun run = runs.findById(runId).orElseThrow(PipelineRunService::notFound);
-		if (run.getStatus() != PipelineRunStatus.RUNNING) throw new ResponseStatusException(HttpStatus.CONFLICT, "La ejecución no está activa.");
+		requireWorker(run, request.workerId());
 		if (logs.countByRun_Id(runId) >= 2000) throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Se alcanzó el límite de logs para esta ejecución.");
 		logs.save(new PipelineRunLog(run, request.stream(), redact(request.message().trim())));
 	}
 
 	@Transactional
+	public void heartbeat(UUID runId, PipelineDtos.WorkerHeartbeatRequest request) {
+		PipelineRun run = runs.findById(runId).orElseThrow(PipelineRunService::notFound);
+		requireWorker(run, request.workerId());
+		run.heartbeat(request.workerId());
+	}
+
+	@Transactional
 	public PipelineDtos.RunSummary completeFromWorker(UUID runId, PipelineDtos.WorkerCompleteRequest request) {
 		PipelineRun run = runs.findById(runId).orElseThrow(PipelineRunService::notFound);
-		if (run.getStatus() != PipelineRunStatus.RUNNING) throw new ResponseStatusException(HttpStatus.CONFLICT, "La ejecución no está activa.");
+		requireWorker(run, request.workerId());
 		boolean succeeded = "SUCCEEDED".equals(request.status());
 		String failure = succeeded ? null : redact(request.failureMessage() == null || request.failureMessage().isBlank() ? "El worker reportó una falla." : request.failureMessage().trim());
 		run.complete(succeeded, failure);
 		logs.save(new PipelineRunLog(run, "SYSTEM", succeeded ? "El worker finalizó la ejecución correctamente." : "El worker marcó la ejecución como fallida."));
 		return summary(run);
+	}
+
+	@Scheduled(fixedDelayString = "${cdci.runner.recovery-interval-ms:30000}")
+	@Transactional
+	public void failExpiredWorkerLeases() {
+		List<PipelineRun> expired = runs.findAllByStatusAndLeaseExpiresAtBefore(PipelineRunStatus.RUNNING, Instant.now());
+		for (PipelineRun run : expired) {
+			run.failAfterLeaseExpiry();
+			logs.save(new PipelineRunLog(run, "SYSTEM", "La ejecución falló porque el worker dejó de reportar actividad."));
+		}
+	}
+
+	@Scheduled(fixedDelayString = "${cdci.runner.retention-interval-ms:86400000}")
+	@Transactional
+	public void purgeExpiredRuns() {
+		runs.deleteExpiredRuns(List.of(PipelineRunStatus.SUCCEEDED, PipelineRunStatus.FAILED, PipelineRunStatus.CANCELLED), Instant.now().minusSeconds(retentionDays * 86400L));
 	}
 
 	private PipelineDefinition requirePipeline(UUID projectId, UUID pipelineId) {
@@ -127,6 +155,11 @@ public class PipelineRunService {
 		if (!SAFE_REF.matcher(ref).matches() || ref.startsWith("/") || ref.endsWith("/") || ref.endsWith(".") || ref.contains("..") || ref.contains("//") || ref.contains("@{")) return false;
 		for (String component : ref.split("/")) if (component.endsWith(".lock")) return false;
 		return true;
+	}
+	private static void requireWorker(PipelineRun run, String workerId) {
+		if (run.getStatus() != PipelineRunStatus.RUNNING || !workerId.equals(run.getClaimedByWorkerId())) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "La ejecución no está activa para este worker.");
+		}
 	}
 	private String redact(String message) { return credentialPattern.matcher(message).replaceAll("[credencial ocultada]"); }
 	private static String safeWorkerId(String workerId) { return workerId.replaceAll("[^A-Za-z0-9._-]", "_"); }

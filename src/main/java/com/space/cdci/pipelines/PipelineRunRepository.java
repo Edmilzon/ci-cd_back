@@ -5,6 +5,9 @@ import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 
 public interface PipelineRunRepository extends JpaRepository<PipelineRun, UUID> {
@@ -13,4 +16,9 @@ public interface PipelineRunRepository extends JpaRepository<PipelineRun, UUID> 
 	boolean existsByPipeline_Id(UUID pipelineId);
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	java.util.Optional<PipelineRun> findFirstByStatusOrderByRequestedAtAsc(PipelineRunStatus status);
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	List<PipelineRun> findAllByStatusAndLeaseExpiresAtBefore(PipelineRunStatus status, java.time.Instant before);
+	@Modifying
+	@Query("delete from PipelineRun run where run.status in :statuses and run.requestedAt < :before")
+	int deleteExpiredRuns(@Param("statuses") List<PipelineRunStatus> statuses, @Param("before") java.time.Instant before);
 }

@@ -27,6 +27,8 @@ public class PipelineRun {
 	@Column(name = "started_at") private Instant startedAt;
 	@Column(name = "completed_at") private Instant completedAt;
 	@Column(name = "failure_message", columnDefinition = "text") private String failureMessage;
+	@Column(name = "claimed_by_worker_id", length = 100) private String claimedByWorkerId;
+	@Column(name = "lease_expires_at") private Instant leaseExpiresAt;
 
 	protected PipelineRun() {}
 
@@ -41,10 +43,17 @@ public class PipelineRun {
 		this.requestedAt = Instant.now();
 	}
 
-	public void claim() {
+	public void claim(String workerId) {
 		if (status != PipelineRunStatus.QUEUED) throw new IllegalStateException("La ejecución ya no está en cola.");
 		this.status = PipelineRunStatus.RUNNING;
 		this.startedAt = Instant.now();
+		this.claimedByWorkerId = workerId;
+		this.leaseExpiresAt = Instant.now().plusSeconds(90);
+	}
+
+	public void heartbeat(String workerId) {
+		if (status != PipelineRunStatus.RUNNING || !workerId.equals(claimedByWorkerId)) throw new IllegalStateException("La ejecución no pertenece a este worker.");
+		this.leaseExpiresAt = Instant.now().plusSeconds(90);
 	}
 
 	public void complete(boolean succeeded, String failureMessage) {
@@ -52,6 +61,15 @@ public class PipelineRun {
 		this.status = succeeded ? PipelineRunStatus.SUCCEEDED : PipelineRunStatus.FAILED;
 		this.failureMessage = succeeded ? null : failureMessage;
 		this.completedAt = Instant.now();
+		this.leaseExpiresAt = null;
+	}
+
+	public void failAfterLeaseExpiry() {
+		if (status != PipelineRunStatus.RUNNING) return;
+		this.status = PipelineRunStatus.FAILED;
+		this.failureMessage = "El worker dejó de reportar actividad y venció su lease.";
+		this.completedAt = Instant.now();
+		this.leaseExpiresAt = null;
 	}
 
 	public UUID getId() { return id; }
@@ -65,4 +83,6 @@ public class PipelineRun {
 	public Instant getStartedAt() { return startedAt; }
 	public Instant getCompletedAt() { return completedAt; }
 	public String getFailureMessage() { return failureMessage; }
+	public String getClaimedByWorkerId() { return claimedByWorkerId; }
+	public Instant getLeaseExpiresAt() { return leaseExpiresAt; }
 }

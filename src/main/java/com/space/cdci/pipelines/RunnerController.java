@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import java.util.UUID;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,7 +27,9 @@ public class RunnerController {
 			@Valid @RequestBody PipelineDtos.WorkerClaimRequest request) {
 		tokens.require(authorization);
 		PipelineDtos.WorkerClaim claim = runs.claim(request.workerId());
-		return claim == null ? ResponseEntity.noContent().build() : ResponseEntity.ok(claim);
+		return claim == null
+				? ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
+				: ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(claim);
 	}
 
 	@PostMapping("/runs/{runId}/logs")
@@ -35,6 +38,14 @@ public class RunnerController {
 			@PathVariable UUID runId, @Valid @RequestBody PipelineDtos.WorkerLogRequest request) {
 		tokens.require(authorization);
 		runs.appendWorkerLog(runId, request);
+	}
+
+	@PostMapping("/runs/{runId}/heartbeat")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void heartbeat(@RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+			@PathVariable UUID runId, @Valid @RequestBody PipelineDtos.WorkerHeartbeatRequest request) {
+		tokens.require(authorization);
+		runs.heartbeat(runId, request);
 	}
 
 	@PostMapping("/runs/{runId}/complete")

@@ -18,7 +18,7 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_DATABASE_URL` | JDBC de PostgreSQL | `jdbc:postgresql://localhost:5432/cdci` |
 | `CDCI_DATABASE_USERNAME` / `CDCI_DATABASE_PASSWORD` | Usuario y contraseña de base de datos | `cdci` / `cdci_dev_only` |
 | `CDCI_FRONTEND_ORIGIN` | Origen CORS permitido, explícito | `http://localhost:3000` |
-| `CDCI_REGISTRATION_ENABLED` | Habilita el registro público | `true` |
+| `CDCI_REGISTRATION_ENABLED` | Habilita el registro; el default de aplicación es cerrado, el ejemplo local lo activa | `false` en despliegues; `true` en `.env.example` |
 | `CDCI_BOOTSTRAP_ADMIN_EMAIL` / `CDCI_BOOTSTRAP_ADMIN_PASSWORD` | Credenciales del primer admin | Sin valor por defecto |
 | `CDCI_COOKIE_SECURE` | Marca `Secure` para cookie de sesión | `false` en localhost; `true` en HTTPS |
 | `CDCI_COOKIE_SAME_SITE` | Política SameSite de la cookie | `lax`; si front y API están en sitios distintos usa `none` junto a HTTPS y `Secure` |
@@ -26,6 +26,12 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_GITHUB_CALLBACK_URL` | URL registrada como callback OAuth de la App | `http://localhost:8080/api/integrations/github/callback` |
 | `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` | Clave base64 de 32 bytes para AES-256-GCM en tokens/refresh tokens persistidos | Sin valor por defecto |
 | `CDCI_RUNNER_TOKEN` | Token aleatorio compartido entre el backend y el worker de ejecuciones | Sin valor por defecto |
+| `CDCI_RUN_RETENTION_DAYS` | Retención de runs terminales y sus logs en PostgreSQL | `90` días |
+| `CDCI_RUNNER_DEFAULT_IMAGE` | Imagen por defecto para trabajos sin `image` | `node:22-bookworm-slim` |
+| `CDCI_RUNNER_STEP_TIMEOUT_SECONDS` / `CDCI_RUNNER_RUN_TIMEOUT_SECONDS` | Límite por paso / por ejecución | `1800` / `21600` segundos |
+| `CDCI_RUNNER_MEMORY_MB` / `CDCI_RUNNER_CPU_COUNT` / `CDCI_RUNNER_PIDS_LIMIT` | Límites de recursos de cada contenedor de trabajo | `2048` / `1` / `256` |
+
+Genera `CDCI_RUNNER_TOKEN` con un secreto aleatorio distinto por ambiente. En PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Define el mismo valor en el proceso del backend y en `cdci_back/.env`; no lo guardes en Git.
 
 Las contraseñas se guardan con Argon2id. Spring Security administra la cookie de sesión `HttpOnly`; las rutas mutables requieren el token CSRF entregado por `GET /api/auth/csrf`. No guardes la cookie de sesión en almacenamiento web. En despliegues, usa secretos gestionados para credenciales de base de datos y bootstrap, TLS, orígenes CORS exactos y cookie `Secure`.
 
@@ -80,6 +86,8 @@ triggers:
 jobs:
   build:
     name: Build
+    image: node:22-bookworm-slim
+    network: bridge
     steps:
       - name: Install dependencies
         run: npm ci
@@ -87,7 +95,7 @@ jobs:
         run: npm run build
 ```
 
-Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses`, expresiones ni variables secretas. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
+Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los trabajos se ejecutan en el orden declarado y aceptan `image` y `network: none|bridge`; sin imagen usan la predeterminada. `bridge` habilita acceso de salida a Internet sin una lista de destinos permitidos; úsalo solo cuando el trabajo necesite descargar dependencias. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses`, expresiones ni variables secretas. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
 
 - `GET /api/projects/{projectId}/pipelines` lista definiciones.
 - `POST /api/projects/{projectId}/pipelines/validate` valida `{ "yaml": "..." }` sin guardar.
@@ -96,8 +104,10 @@ Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 tra
 - `GET /api/projects/{projectId}/pipelines/{pipelineId}/versions` y `.../versions/{number}` consultan historial y contenido.
 - `DELETE /api/projects/{projectId}/pipelines/{pipelineId}` elimina definición e historial.
 
-Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `POST /runs/{id}/logs` y `POST /runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. La ruta de claim responde `204` si la cola está vacía; en caso contrario entrega la definición, el repositorio y el token GitHub de lectura al proceso worker autenticado. Ese token solo debe estar en memoria del worker confiable durante checkout; nunca se debe pasarlo al contenedor o al comando del pipeline. Expón el worker por una red privada con TLS y usa un secreto aleatorio distinto por entorno.
+Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `POST /runs/{id}/logs`, `POST /runs/{id}/heartbeat` y `POST /runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. Claim responde `204` si la cola está vacía; si hay trabajo entrega la definición, el repositorio y el token GitHub de lectura al worker autenticado. Ese token solo se usa durante el checkout y nunca se monta ni se pasa al contenedor o al comando del pipeline. Leases renuevan el worker activo y cierran como fallidas las ejecuciones cuyo worker deja de reportar.
 
-El backend no ejecuta los comandos: todavía falta el proceso runner que reclama trabajos, obtiene el código sin filtrar credenciales y los ejecuta aislados. Hasta conectar ese worker, las solicitudes manuales permanecen `QUEUED`. Los campos `triggers` siguen siendo declarativos y no inician ejecuciones automáticas.
+Para desarrollo, configura el mismo `CDCI_RUNNER_TOKEN` para el backend y `cdci_back/.env`, luego inicia el worker: `docker compose --profile runner up --build -d runner`. El perfil levanta un daemon Docker-in-Docker privado para jobs efímeros; cada paso corre como UID no root, sin capacidades Linux, con filesystem base de solo lectura, límite de memoria/CPU/PIDs y timeout. La red del job es `none` por defecto; `bridge` permite egress irrestricto. Usa esta modalidad en una máquina Linux dedicada al runner, no junto a servicios de producción: ejecutar código de repositorio sigue siendo una frontera de seguridad. El perfil no publica puertos del daemon Docker. En producción usa `CDCI_RUNNER_API_URL` con HTTPS/TLS; el valor `host.docker.internal` es para desarrollo local.
+
+Los campos `triggers` siguen siendo declarativos: en esta versión solo se inician ejecuciones manuales. No se exponen secretos a los jobs, no se suben artefactos y todavía no se implementa un destino de despliegue. Los runs terminales y sus logs se purgan después de 90 días.
 
 Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).

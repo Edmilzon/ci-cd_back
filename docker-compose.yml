@@ -16,5 +16,36 @@ services:
       timeout: 3s
       retries: 10
 
+  runner:
+    profiles: ["runner"]
+    build:
+      context: ./runner
+    container_name: cdci-runner
+    privileged: true
+    environment:
+      CDCI_RUNNER_API_URL: ${CDCI_RUNNER_API_URL:-http://host.docker.internal:8080}
+      CDCI_RUNNER_TOKEN: ${CDCI_RUNNER_TOKEN:-}
+      CDCI_RUNNER_ID: ${CDCI_RUNNER_ID:-cdci-local-runner}
+      CDCI_RUNNER_DEFAULT_IMAGE: ${CDCI_RUNNER_DEFAULT_IMAGE:-node:22-bookworm-slim}
+      CDCI_RUNNER_STEP_TIMEOUT_SECONDS: ${CDCI_RUNNER_STEP_TIMEOUT_SECONDS:-1800}
+      CDCI_RUNNER_RUN_TIMEOUT_SECONDS: ${CDCI_RUNNER_RUN_TIMEOUT_SECONDS:-21600}
+      CDCI_RUNNER_MEMORY_MB: ${CDCI_RUNNER_MEMORY_MB:-2048}
+      CDCI_RUNNER_CPU_COUNT: ${CDCI_RUNNER_CPU_COUNT:-1}
+      CDCI_RUNNER_PIDS_LIMIT: ${CDCI_RUNNER_PIDS_LIMIT:-256}
+    volumes:
+      - cdci-runner-work:/work
+      - cdci-runner-engine-data:/var/lib/docker
+    networks:
+      - runner-control
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    stop_grace_period: 45s
+
 volumes:
   cdci-postgres-data:
+  cdci-runner-work:
+  cdci-runner-engine-data:
+
+networks:
+  runner-control:

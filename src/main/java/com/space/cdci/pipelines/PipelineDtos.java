@@ -23,11 +23,14 @@ public final class PipelineDtos {
 			String triggerType, String status, String requestedBy, Instant requestedAt, Instant startedAt, Instant completedAt,
 			String failureMessage) {}
 	public record RunLog(long id, String stream, String message, Instant createdAt) {}
-	public record WorkerClaimRequest(@jakarta.validation.constraints.NotBlank @Size(max = 100) String workerId) {}
-	public record WorkerLogRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "STDOUT|STDERR|SYSTEM") String stream,
+	public record WorkerClaimRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "[A-Za-z0-9._-]{1,100}") String workerId) {}
+	public record WorkerLogRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "[A-Za-z0-9._-]{1,100}") String workerId,
+			@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "STDOUT|STDERR|SYSTEM") String stream,
 			@NotBlank @Size(max = 8000) String message) {}
-	public record WorkerCompleteRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "SUCCEEDED|FAILED") String status,
+	public record WorkerCompleteRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "[A-Za-z0-9._-]{1,100}") String workerId,
+			@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "SUCCEEDED|FAILED") String status,
 			@Size(max = 2000) String failureMessage) {}
+	public record WorkerHeartbeatRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "[A-Za-z0-9._-]{1,100}") String workerId) {}
 	public record WorkerClaim(UUID runId, UUID pipelineId, String pipelineName, int version, String branchName,
 			String repositoryName, String repositoryCloneUrl, String githubAccessToken, String yaml, Instant claimedAt) {}
 }
