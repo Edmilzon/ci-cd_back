@@ -18,11 +18,14 @@ public class AuthController {
 	private final IdentityService identityService;
 	private final UserRepository users;
 	private final PasswordChangeService passwordChangeService;
+	private final PasswordResetService passwordResetService;
 
-	public AuthController(IdentityService identityService, UserRepository users, PasswordChangeService passwordChangeService) {
+	public AuthController(IdentityService identityService, UserRepository users, PasswordChangeService passwordChangeService,
+			PasswordResetService passwordResetService) {
 		this.identityService = identityService;
 		this.users = users;
 		this.passwordChangeService = passwordChangeService;
+		this.passwordResetService = passwordResetService;
 	}
 
 	@GetMapping("/csrf")
@@ -32,6 +35,25 @@ public class AuthController {
 	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.CREATED)
 	public AuthDtos.UserResponse register(@Valid @RequestBody AuthDtos.RegisterRequest request) {
 		return identityService.register(request);
+	}
+
+	@GetMapping("/password-reset/status")
+	public AuthDtos.PasswordResetStatusResponse passwordResetStatus() {
+		return new AuthDtos.PasswordResetStatusResponse(passwordResetService.isEnabled());
+	}
+
+	@PostMapping("/password-reset/request")
+	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+	public AuthDtos.MessageResponse requestPasswordReset(@Valid @RequestBody AuthDtos.PasswordResetRequest request,
+			jakarta.servlet.http.HttpServletRequest httpRequest) {
+		return new AuthDtos.MessageResponse(passwordResetService.requestReset(request, httpRequest));
+	}
+
+	@PostMapping("/password-reset/confirm")
+	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
+	public void confirmPasswordReset(@Valid @RequestBody AuthDtos.PasswordResetConfirmRequest request,
+			jakarta.servlet.http.HttpServletRequest httpRequest) {
+		passwordResetService.resetPassword(request, httpRequest);
 	}
 
 	@GetMapping("/me")

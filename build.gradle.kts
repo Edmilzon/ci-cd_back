@@ -25,6 +25,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-security")
 	implementation("org.springframework.security:spring-security-crypto")
 	implementation("org.springframework.boot:spring-boot-starter-session-jdbc")
+	implementation("org.springframework.boot:spring-boot-starter-mail")
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
 	implementation("org.springframework.boot:spring-boot-starter-flyway")
 	implementation("org.flywaydb:flyway-database-postgresql")

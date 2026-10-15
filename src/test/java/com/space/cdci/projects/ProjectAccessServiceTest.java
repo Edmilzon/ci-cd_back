@@ -85,7 +85,7 @@ class ProjectAccessServiceTest {
 
 	private static CdciPrincipal actor(UUID id, Set<String> roles, Set<String> permissions) {
 		CdciPrincipal actor = mock(CdciPrincipal.class);
-		when(actor.id()).thenReturn(id);
+		if (!roles.contains("ADMIN") && !permissions.contains("PROJECT_ADMIN")) when(actor.id()).thenReturn(id);
 		when(actor.roleCodes()).thenReturn(roles);
 		when(actor.permissionCodes()).thenReturn(permissions);
 		return actor;

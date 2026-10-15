@@ -16,6 +16,11 @@ Operational baseline for the internal beta. The API does not claim an availabili
 - Audit events are purged after 365 days (`CDCI_AUDIT_RETENTION_DAYS`). Keep audit retention aligned with the organization's privacy and incident-response requirements.
 - CDCI does not persist pipeline artifacts. GitHub's deployment history is managed by GitHub and its account settings.
 - PostgreSQL backups default to 30 days (`CDCI_BACKUP_RETENTION_DAYS`). The backup directory must be a durable, encrypted, off-host mount; runner work volumes are not backup storage.
+- Password-reset tokens expire after 20 minutes by default and are single-use. Identity rate-limit buckets are purged after two days; their HMAC key must be backed up as an environment secret, independently per environment.
+
+## Account recovery
+
+Keep `CDCI_EMAIL_ENABLED=false` until SMTP host, sender, authentication, and STARTTLS settings are confirmed. For a release that enables recovery, send a test request to a controlled account and verify receipt, one-time consumption, expiry, session invalidation, and the provider's delivery logs. The API returns an identical response for existing and missing accounts. Monitor SMTP failure warnings without logging recovery links or tokens. Configure a trusted edge rate limit as well as CDCI's PostgreSQL-backed limits, especially when the API sits behind a shared proxy.
 
 ## Encrypted PostgreSQL backups
 
