@@ -52,6 +52,7 @@ public class SecurityConfiguration {
 			})
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
 			.authorizeHttpRequests(auth -> auth
+				.requestMatchers(HttpMethod.GET, "/api/health/live", "/api/health/ready").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
 				.requestMatchers("/api/runner/**").permitAll()

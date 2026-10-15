@@ -28,6 +28,7 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_SECRET_ENCRYPTION_KEY` | Clave base64 independiente de 32 bytes para secretos de pipeline cifrados con AES-256-GCM | Sin valor por defecto |
 | `CDCI_RUNNER_TOKEN` | Token aleatorio compartido entre el backend y el worker de ejecuciones | Sin valor por defecto |
 | `CDCI_RUN_RETENTION_DAYS` | Retención de runs terminales y sus logs en PostgreSQL | `90` días |
+| `CDCI_AUDIT_RETENTION_DAYS` | Retención de eventos de auditoría antes de purgarlos | `365` días |
 | `CDCI_RUNNER_DEFAULT_IMAGE` | Imagen por defecto para trabajos sin `image` | `node:22-bookworm-slim` |
 | `CDCI_RUNNER_STEP_TIMEOUT_SECONDS` / `CDCI_RUNNER_RUN_TIMEOUT_SECONDS` | Límite por paso / por ejecución | `1800` / `21600` segundos |
 | `CDCI_RUNNER_MEMORY_MB` / `CDCI_RUNNER_CPU_COUNT` / `CDCI_RUNNER_PIDS_LIMIT` | Límites de recursos de cada contenedor de trabajo | `2048` / `1` / `256` |
@@ -111,6 +112,8 @@ Los mantenedores del proyecto pueden crear, reemplazar y eliminar secretos en **
 - `DELETE /api/projects/{projectId}/pipelines/{pipelineId}` elimina definición e historial.
 
 Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `/runs/{id}/source`, `/runs/{id}/logs`, `/runs/{id}/heartbeat`, `/runs/{id}/deployments` y `/runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. Claim responde `204` si la cola está vacía; si hay trabajo entrega la definición, el repositorio y el token GitHub de lectura al worker autenticado. Ese token solo se usa durante el checkout y nunca se monta ni se pasa al contenedor o al comando del pipeline. Leases renuevan el worker activo y cierran como fallidas las ejecuciones cuyo worker deja de reportar.
+
+Los endpoints públicos de monitorización son `GET /api/health/live` (proceso) y `GET /api/health/ready` (proceso y consulta a PostgreSQL). Ambos evitan caché y la respuesta de readiness no expone detalles de conexión. El [runbook operativo](ops/RUNBOOK.md) define alarmas, retención, backups PostgreSQL cifrados y un procedimiento de restauración en una base aislada.
 
 Para desarrollo, configura el mismo `CDCI_RUNNER_TOKEN` para el backend y `cdci_back/.env`, luego inicia el worker: `docker compose --profile runner up --build -d runner`. El perfil levanta un daemon Docker-in-Docker privado para jobs efímeros; cada paso corre como UID no root, sin capacidades Linux, con filesystem base de solo lectura, límite de memoria/CPU/PIDs y timeout. La red del job es `none` por defecto; `bridge` permite egress irrestricto. Usa esta modalidad en una máquina Linux dedicada al runner, no junto a servicios de producción: ejecutar código de repositorio sigue siendo una frontera de seguridad. El perfil no publica puertos del daemon Docker. En producción usa `CDCI_RUNNER_API_URL` con HTTPS/TLS; el valor `host.docker.internal` es para desarrollo local.
 
