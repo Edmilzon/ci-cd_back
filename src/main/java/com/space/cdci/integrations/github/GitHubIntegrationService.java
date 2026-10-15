@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -181,6 +182,14 @@ public class GitHubIntegrationService {
 		}
 	}
 
+	@Transactional
+	public RunnerRepositoryAccess runnerAccess(UUID linkedRepositoryId) {
+		var linked = linkedRepositories.findById(linkedRepositoryId).orElseThrow(() ->
+				new ResponseStatusException(HttpStatus.NOT_FOUND, "No se encontró el repositorio conectado."));
+		GitHubConnection connection = linked.getGithubConnection();
+		return new RunnerRepositoryAccess(linked.getFullName(), "https://github.com/" + linked.getFullName() + ".git", accessToken(connection));
+	}
+
 	private Map<?, ?> exchangeCode(String code) {
 		try {
 			LinkedMultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -321,4 +330,5 @@ public class GitHubIntegrationService {
 	}
 
 	public record GitHubRepositoryData(GitHubConnection connection, ProjectDtos.RepositoryCatalogItem repository) {}
+	public record RunnerRepositoryAccess(String fullName, String cloneUrl, String accessToken) {}
 }

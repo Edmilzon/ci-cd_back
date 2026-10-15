@@ -25,6 +25,7 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_GITHUB_CLIENT_ID` / `CDCI_GITHUB_CLIENT_SECRET` | Credenciales de la GitHub App | Sin valores por defecto |
 | `CDCI_GITHUB_CALLBACK_URL` | URL registrada como callback OAuth de la App | `http://localhost:8080/api/integrations/github/callback` |
 | `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` | Clave base64 de 32 bytes para AES-256-GCM en tokens/refresh tokens persistidos | Sin valor por defecto |
+| `CDCI_RUNNER_TOKEN` | Token aleatorio compartido entre el backend y el worker de ejecuciones | Sin valor por defecto |
 
 Las contraseñas se guardan con Argon2id. Spring Security administra la cookie de sesión `HttpOnly`; las rutas mutables requieren el token CSRF entregado por `GET /api/auth/csrf`. No guardes la cookie de sesión en almacenamiento web. En despliegues, usa secretos gestionados para credenciales de base de datos y bootstrap, TLS, orígenes CORS exactos y cookie `Secure`.
 
@@ -95,6 +96,8 @@ Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 tra
 - `GET /api/projects/{projectId}/pipelines/{pipelineId}/versions` y `.../versions/{number}` consultan historial y contenido.
 - `DELETE /api/projects/{projectId}/pipelines/{pipelineId}` elimina definición e historial.
 
-El editor y el versionado ya están disponibles; la ejecución está deshabilitada hasta implementar un worker aislado. Estos campos `triggers` todavía no inician ejecuciones.
+Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versión, rama y logs del sistema. El contrato del worker está expuesto en `/api/runner`: `POST /claim`, `POST /runs/{id}/logs` y `POST /runs/{id}/complete`. Usa `Authorization: Bearer <CDCI_RUNNER_TOKEN>`. La ruta de claim responde `204` si la cola está vacía; en caso contrario entrega la definición, el repositorio y el token GitHub de lectura al proceso worker autenticado. Ese token solo debe estar en memoria del worker confiable durante checkout; nunca se debe pasarlo al contenedor o al comando del pipeline. Expón el worker por una red privada con TLS y usa un secreto aleatorio distinto por entorno.
+
+El backend no ejecuta los comandos: todavía falta el proceso runner que reclama trabajos, obtiene el código sin filtrar credenciales y los ejecuta aislados. Hasta conectar ese worker, las solicitudes manuales permanecen `QUEUED`. Los campos `triggers` siguen siendo declarativos y no inician ejecuciones automáticas.
 
 Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).

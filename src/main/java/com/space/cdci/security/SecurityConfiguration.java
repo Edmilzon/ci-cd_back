@@ -33,7 +33,7 @@ public class SecurityConfiguration {
 		CorsConfiguration cors = new CorsConfiguration();
 		cors.setAllowedOrigins(List.of(frontendOrigin));
 		cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-		cors.setAllowedHeaders(List.of("Accept", "Content-Type", "X-XSRF-TOKEN"));
+		cors.setAllowedHeaders(List.of("Accept", "Authorization", "Content-Type", "X-XSRF-TOKEN"));
 		cors.setExposedHeaders(List.of("Location"));
 		cors.setAllowCredentials(true);
 		cors.setMaxAge(3600L);
@@ -46,11 +46,15 @@ public class SecurityConfiguration {
 	SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
 		http
 			.cors(Customizer.withDefaults())
-			.csrf(csrf -> csrf.spa())
+			.csrf(csrf -> {
+				csrf.spa();
+				csrf.ignoringRequestMatchers("/api/runner/**");
+			})
 			.sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
+				.requestMatchers("/api/runner/**").permitAll()
 				.requestMatchers("/api/auth/**").authenticated()
 				.requestMatchers("/api/admin/**").authenticated()
 				.requestMatchers("/api/projects/**", "/api/integrations/github/**").authenticated()

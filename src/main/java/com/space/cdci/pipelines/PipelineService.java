@@ -24,17 +24,19 @@ import org.springframework.web.server.ResponseStatusException;
 public class PipelineService {
 	private final PipelineDefinitionRepository pipelines;
 	private final PipelineVersionRepository versions;
+	private final PipelineRunRepository runs;
 	private final LinkedRepositoryRepository repositories;
 	private final UserRepository users;
 	private final ProjectAccessService access;
 	private final PipelineYamlValidator validator;
 	private final AccessAuditService audit;
 
-	public PipelineService(PipelineDefinitionRepository pipelines, PipelineVersionRepository versions,
+	public PipelineService(PipelineDefinitionRepository pipelines, PipelineVersionRepository versions, PipelineRunRepository runs,
 			LinkedRepositoryRepository repositories, UserRepository users, ProjectAccessService access,
 			PipelineYamlValidator validator, AccessAuditService audit) {
 		this.pipelines = pipelines;
 		this.versions = versions;
+		this.runs = runs;
 		this.repositories = repositories;
 		this.users = users;
 		this.access = access;
@@ -99,6 +101,7 @@ public class PipelineService {
 	public void delete(UUID projectId, UUID pipelineId, CdciPrincipal actor) {
 		Project project = access.requireManage(projectId, actor);
 		PipelineDefinition pipeline = requirePipeline(projectId, pipelineId);
+		if (runs.existsByPipeline_Id(pipelineId)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Este pipeline tiene ejecuciones registradas y no se puede eliminar.");
 		String name = pipeline.getName();
 		pipelines.delete(pipeline);
 		project.touch();
