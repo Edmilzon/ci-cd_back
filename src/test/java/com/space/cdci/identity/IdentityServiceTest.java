@@ -23,6 +23,15 @@ class IdentityServiceTest {
 	@Mock private HttpServletRequest httpRequest;
 
 	@Test
+	void registrationStatusReflectsConfiguredAvailability() {
+		IdentityService enabled = new IdentityService(users, roles, passwordEncoder, emailVerification, true);
+		IdentityService disabled = new IdentityService(users, roles, passwordEncoder, emailVerification, false);
+
+		assertTrue(enabled.registrationStatus().enabled());
+		assertFalse(disabled.registrationStatus().enabled());
+	}
+
+	@Test
 	void requiredVerificationReturnsNeutralRegistrationResponseForExistingEmail() {
 		when(emailVerification.isRequired()).thenReturn(true);
 		when(users.findByEmailIgnoreCase("person@example.com"))

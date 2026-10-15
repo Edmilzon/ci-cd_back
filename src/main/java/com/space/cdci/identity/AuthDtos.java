@@ -26,6 +26,7 @@ public final class AuthDtos {
 			@NotBlank @Size(min = 12, max = 128) String newPassword) {}
 
 	public record PasswordResetStatusResponse(boolean enabled) {}
+	public record RegistrationStatusResponse(boolean enabled) {}
 	public record EmailVerificationRequest(@NotBlank @Email @Size(max = 254) String email) {}
 	public record EmailVerificationConfirmRequest(@NotBlank @Size(max = 64) String token) {}
 	public record EmailVerificationStatusResponse(boolean required) {}

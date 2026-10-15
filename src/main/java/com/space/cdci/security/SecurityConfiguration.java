@@ -55,6 +55,7 @@ public class SecurityConfiguration {
 			.authorizeHttpRequests(auth -> auth
 				.requestMatchers(HttpMethod.GET, "/api/health/live", "/api/health/ready").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
+				.requestMatchers(HttpMethod.GET, "/api/auth/registration/status").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/password-reset/status").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/email-verification/status").permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/password-reset/request", "/api/auth/password-reset/confirm", "/api/auth/email-verification/resend", "/api/auth/email-verification/confirm").permitAll()

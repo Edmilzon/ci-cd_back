@@ -39,6 +39,11 @@ public class AuthController {
 		return identityService.register(request, httpRequest);
 	}
 
+	@GetMapping("/registration/status")
+	public AuthDtos.RegistrationStatusResponse registrationStatus() {
+		return identityService.registrationStatus();
+	}
+
 	@GetMapping("/email-verification/status")
 	public AuthDtos.EmailVerificationStatusResponse emailVerificationStatus() {
 		return new AuthDtos.EmailVerificationStatusResponse(emailVerificationService.isRequired());

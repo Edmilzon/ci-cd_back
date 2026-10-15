@@ -29,6 +29,10 @@ public class IdentityService {
 		emailVerification.validateConfiguration(registrationEnabled);
 	}
 
+	public AuthDtos.RegistrationStatusResponse registrationStatus() {
+		return new AuthDtos.RegistrationStatusResponse(registrationEnabled);
+	}
+
 	@Transactional
 	public AuthDtos.RegisterResponse register(AuthDtos.RegisterRequest request, HttpServletRequest httpRequest) {
 		if (!registrationEnabled) throw new ResponseStatusException(HttpStatus.FORBIDDEN, "El registro está deshabilitado.");
