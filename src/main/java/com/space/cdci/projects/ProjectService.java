@@ -5,6 +5,7 @@ import com.space.cdci.identity.CdciPrincipal;
 import com.space.cdci.identity.UserAccount;
 import com.space.cdci.identity.UserRepository;
 import com.space.cdci.integrations.github.GitHubIntegrationService;
+import com.space.cdci.pipelines.PipelineDefinitionRepository;
 import jakarta.validation.Valid;
 import java.text.Normalizer;
 import java.util.List;
@@ -20,16 +21,19 @@ public class ProjectService {
 	private final ProjectRepository projects;
 	private final ProjectMemberRepository members;
 	private final LinkedRepositoryRepository repositories;
+	private final PipelineDefinitionRepository pipelines;
 	private final UserRepository users;
 	private final ProjectAccessService access;
 	private final GitHubIntegrationService github;
 	private final AccessAuditService audit;
 
 	public ProjectService(ProjectRepository projects, ProjectMemberRepository members, LinkedRepositoryRepository repositories,
+			PipelineDefinitionRepository pipelines,
 			UserRepository users, ProjectAccessService access, GitHubIntegrationService github, AccessAuditService audit) {
 		this.projects = projects;
 		this.members = members;
 		this.repositories = repositories;
+		this.pipelines = pipelines;
 		this.users = users;
 		this.access = access;
 		this.github = github;
@@ -168,6 +172,7 @@ public class ProjectService {
 	public void removeRepository(UUID projectId, UUID linkedRepositoryId, CdciPrincipal actor) {
 		Project project = access.requireManage(projectId, actor);
 		LinkedRepository linked = repositories.findById(linkedRepositoryId).filter(repo -> repo.getProject().getId().equals(projectId)).orElseThrow(ProjectService::notFound);
+		if (pipelines.countByRepository_Id(linkedRepositoryId) > 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "Elimina primero los pipelines asociados a este repositorio.");
 		repositories.delete(linked);
 		project.touch();
 		audit.record(actor.email(), "PROJECT_REPOSITORY_REMOVED", "PROJECT_REPOSITORY", linked.getId().toString(), "Desconectó " + linked.getFullName() + " del proyecto " + project.getName() + ".");

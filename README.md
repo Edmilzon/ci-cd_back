@@ -65,4 +65,36 @@ La primera integración usa una **GitHub App** y tokens de usuario con permisos 
 
 El callback externo conserva la sesión CDCI del navegador. En producción, registra exactamente la URL HTTPS publicada y configura cookie `Secure`; si el frontend y la API están en sitios distintos, usa `SameSite=None` y HTTPS.
 
+## Pipelines YAML
+
+Cada pipeline pertenece a un proyecto y a uno de sus repositorios conectados. CDCI valida la definición antes de guardarla y conserva cada cambio como una versión inmutable en PostgreSQL. El borrado de un pipeline elimina también su historial; un repositorio no se puede desconectar mientras tenga pipelines asociados.
+
+Formato inicial soportado:
+
+```yaml
+name: Build frontend
+triggers:
+  - push
+  - pull_request
+jobs:
+  build:
+    name: Build
+    steps:
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+```
+
+Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses`, expresiones ni variables secretas. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
+
+- `GET /api/projects/{projectId}/pipelines` lista definiciones.
+- `POST /api/projects/{projectId}/pipelines/validate` valida `{ "yaml": "..." }` sin guardar.
+- `POST /api/projects/{projectId}/pipelines` crea `{ "repositoryId": "...", "yaml": "..." }` como versión 1.
+- `POST /api/projects/{projectId}/pipelines/{pipelineId}/versions` guarda una versión nueva.
+- `GET /api/projects/{projectId}/pipelines/{pipelineId}/versions` y `.../versions/{number}` consultan historial y contenido.
+- `DELETE /api/projects/{projectId}/pipelines/{pipelineId}` elimina definición e historial.
+
+El editor y el versionado ya están disponibles; la ejecución está deshabilitada hasta implementar un worker aislado. Estos campos `triggers` todavía no inician ejecuciones.
+
 Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).
