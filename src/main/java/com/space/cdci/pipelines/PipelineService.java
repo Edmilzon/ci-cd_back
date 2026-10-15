@@ -65,7 +65,7 @@ public class PipelineService {
 		PipelineDefinition pipeline = pipelines.save(new PipelineDefinition(project, repository, result.name().trim(), user(actor.id())));
 		versions.save(new PipelineVersion(pipeline, 1, request.yaml(), sha256(request.yaml()), user(actor.id())));
 		project.touch();
-		audit.record(actor.email(), "PIPELINE_CREATED", "PIPELINE", pipeline.getId().toString(), "Creó el pipeline " + pipeline.getName() + " en " + repository.getFullName() + ".");
+		audit.recordProject(projectId, actor.email(), "PIPELINE_CREATED", "PIPELINE", pipeline.getId().toString(), "Creó el pipeline " + pipeline.getName() + " en " + repository.getFullName() + ".");
 		return summary(pipeline);
 	}
 
@@ -77,7 +77,7 @@ public class PipelineService {
 		int number = pipeline.nextVersion(result.name().trim());
 		PipelineVersion version = versions.save(new PipelineVersion(pipeline, number, request.yaml(), sha256(request.yaml()), user(actor.id())));
 		project.touch();
-		audit.record(actor.email(), "PIPELINE_VERSION_CREATED", "PIPELINE", pipeline.getId().toString(), "Guardó la versión " + number + " del pipeline " + pipeline.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PIPELINE_VERSION_CREATED", "PIPELINE", pipeline.getId().toString(), "Guardó la versión " + number + " del pipeline " + pipeline.getName() + ".");
 		return versionSummary(version);
 	}
 
@@ -105,7 +105,7 @@ public class PipelineService {
 		String name = pipeline.getName();
 		pipelines.delete(pipeline);
 		project.touch();
-		audit.record(actor.email(), "PIPELINE_DELETED", "PIPELINE", pipelineId.toString(), "Eliminó el pipeline " + name + " y sus versiones.");
+		audit.recordProject(projectId, actor.email(), "PIPELINE_DELETED", "PIPELINE", pipelineId.toString(), "Eliminó el pipeline " + name + " y sus versiones.");
 	}
 
 	private PipelineDtos.ValidationResult requireValid(String yaml) {

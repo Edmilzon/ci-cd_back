@@ -38,6 +38,14 @@ public class ProjectAccessService {
 		throw notFound();
 	}
 
+	public Project requireActivityRead(UUID projectId, CdciPrincipal actor) {
+		Project project = requireRead(projectId, actor);
+		if (isProjectAdmin(actor) || actor.permissionCodes().contains("AUDIT_READ")) return project;
+		ProjectMember member = members.findByProject_IdAndUser_Id(projectId, actor.id()).orElseThrow(ProjectAccessService::notFound);
+		if (member.getAccessLevel() == ProjectAccessLevel.OWNER || member.getAccessLevel() == ProjectAccessLevel.MAINTAINER) return project;
+		throw notFound();
+	}
+
 	public boolean isProjectAdmin(CdciPrincipal actor) { return actor.permissionCodes().contains("PROJECT_ADMIN") || actor.roleCodes().contains("ADMIN"); }
 
 	private Project find(UUID id) { return projects.findByIdAndArchivedFalse(id).orElseThrow(ProjectAccessService::notFound); }

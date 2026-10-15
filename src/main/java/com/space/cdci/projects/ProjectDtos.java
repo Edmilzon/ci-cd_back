@@ -22,7 +22,7 @@ public final class ProjectDtos {
 	public record AddRepositoryRequest(@NotNull Long githubRepositoryId) {}
 
 	public record ProjectSummary(UUID id, String slug, String name, String description, String accessLevel,
-			boolean canManage, boolean canArchive, long repositoryCount, long memberCount, Instant createdAt, Instant updatedAt) {}
+			boolean canManage, boolean canArchive, boolean canReadActivity, long repositoryCount, long memberCount, Instant createdAt, Instant updatedAt) {}
 	public record ProjectMemberSummary(UUID userId, String fullName, String email, String accessLevel, Instant addedAt) {}
 	public record RepositorySummary(UUID id, long githubRepositoryId, String fullName, String htmlUrl,
 			String defaultBranch, boolean privateRepository, String description, String githubLogin, Instant createdAt) {}

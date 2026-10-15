@@ -26,8 +26,13 @@ import com.space.cdci.integrations.github.GitHubIntegrationService;
 public class ProjectController {
 	private final ProjectService projects;
 	private final ProjectSecretService secrets;
+	private final ProjectActivityService activity;
 
-	public ProjectController(ProjectService projects, ProjectSecretService secrets) { this.projects = projects; this.secrets = secrets; }
+	public ProjectController(ProjectService projects, ProjectSecretService secrets, ProjectActivityService activity) {
+		this.projects = projects;
+		this.secrets = secrets;
+		this.activity = activity;
+	}
 
 	@GetMapping
 	public List<ProjectDtos.ProjectSummary> list(@AuthenticationPrincipal CdciPrincipal actor) { return projects.list(actor); }
@@ -40,6 +45,15 @@ public class ProjectController {
 
 	@GetMapping("/{projectId}")
 	public ProjectDtos.ProjectSummary get(@PathVariable UUID projectId, @AuthenticationPrincipal CdciPrincipal actor) { return projects.get(projectId, actor); }
+
+	@GetMapping("/{projectId}/activity")
+	public ProjectActivityDtos.PageResponse activity(@PathVariable UUID projectId,
+			@RequestParam(defaultValue = "ALL") String category,
+			@RequestParam(defaultValue = "0") int page,
+			@RequestParam(defaultValue = "25") int size,
+			@AuthenticationPrincipal CdciPrincipal actor) {
+		return activity.page(projectId, category, page, size, actor);
+	}
 
 	@PutMapping("/{projectId}")
 	public ProjectDtos.ProjectSummary update(@PathVariable UUID projectId, @Valid @RequestBody ProjectDtos.UpdateProjectRequest request, @AuthenticationPrincipal CdciPrincipal actor) {

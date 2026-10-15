@@ -1,6 +1,7 @@
 package com.space.cdci.dashboard;
 
 import com.space.cdci.identity.CdciPrincipal;
+import com.space.cdci.identity.AccessAuditService;
 import com.space.cdci.pipelines.PipelineDeployment;
 import com.space.cdci.pipelines.PipelineDeploymentRepository;
 import com.space.cdci.pipelines.PipelineDefinitionRepository;
@@ -31,25 +32,30 @@ public class DashboardService {
 	private final PipelineDefinitionRepository pipelines;
 	private final PipelineRunRepository runs;
 	private final PipelineDeploymentRepository deployments;
+	private final AccessAuditService audit;
 
 	public DashboardService(ProjectService projects, PipelineDefinitionRepository pipelines, PipelineRunRepository runs,
-			PipelineDeploymentRepository deployments) {
+			PipelineDeploymentRepository deployments, AccessAuditService audit) {
 		this.projects = projects;
 		this.pipelines = pipelines;
 		this.runs = runs;
 		this.deployments = deployments;
+		this.audit = audit;
 	}
 
 	@Transactional(readOnly = true)
 	public DashboardDtos.Summary summary(CdciPrincipal actor) {
 		List<ProjectDtos.ProjectSummary> visibleProjects = projects.list(actor);
 		List<UUID> projectIds = visibleProjects.stream().map(ProjectDtos.ProjectSummary::id).toList();
+		List<ProjectDtos.ProjectSummary> activityProjects = visibleProjects.stream().filter(ProjectDtos.ProjectSummary::canReadActivity).toList();
+		List<UUID> activityProjectIds = activityProjects.stream().map(ProjectDtos.ProjectSummary::id).toList();
+		Map<UUID, String> activityProjectNames = activityProjects.stream().collect(java.util.stream.Collectors.toMap(ProjectDtos.ProjectSummary::id, ProjectDtos.ProjectSummary::name));
 		ZonedDateTime now = ZonedDateTime.now(DASHBOARD_ZONE);
 		Instant todayStart = now.toLocalDate().atStartOfDay(DASHBOARD_ZONE).toInstant();
 		Instant thirtyDaysAgo = now.toInstant().minus(Duration.ofDays(30));
 		List<DashboardDtos.DailyRuns> daily = dailyRuns(now.toLocalDate(), projectIds);
 		if (projectIds.isEmpty()) {
-			return new DashboardDtos.Summary(0, 0, 0, 0, 0, null, daily, List.of(), List.of());
+			return new DashboardDtos.Summary(0, 0, 0, 0, 0, null, daily, List.of(), List.of(), List.of());
 		}
 
 		long runsToday = runs.countByPipeline_Project_IdInAndRequestedAtGreaterThanEqual(projectIds, todayStart);
@@ -63,8 +69,10 @@ public class DashboardService {
 				.stream().map(DashboardService::recentRun).toList();
 		List<DashboardDtos.RecentDeployment> recentDeployments = deployments.findTop20ByProject_IdInOrderByRequestedAtDesc(projectIds)
 				.stream().map(DashboardService::recentDeployment).toList();
+		List<DashboardDtos.RecentActivity> recentActivity = audit.recentForProjects(activityProjectIds).stream()
+				.map(event -> DashboardDtos.RecentActivity.from(event, activityProjectNames.get(event.getProjectId()))).toList();
 		return new DashboardDtos.Summary(visibleProjects.size(), pipelines.countByProject_IdIn(projectIds), runsToday,
-				activeRuns, successRate, median == null ? null : Math.round(median), daily, recent, recentDeployments);
+				activeRuns, successRate, median == null ? null : Math.round(median), daily, recent, recentDeployments, recentActivity);
 	}
 
 	private List<DashboardDtos.DailyRuns> dailyRuns(LocalDate today, List<UUID> projectIds) {

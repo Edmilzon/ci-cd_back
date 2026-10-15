@@ -13,6 +13,9 @@ public class AccessAuditEvent {
 	@Id
 	private UUID id;
 
+	@Column(name = "project_id")
+	private UUID projectId;
+
 	@Column(name = "actor_email", nullable = false, length = 254)
 	private String actorEmail;
 
@@ -34,7 +37,12 @@ public class AccessAuditEvent {
 	protected AccessAuditEvent() {}
 
 	public AccessAuditEvent(String actorEmail, String action, String targetType, String targetId, String summary) {
+		this(null, actorEmail, action, targetType, targetId, summary);
+	}
+
+	public AccessAuditEvent(UUID projectId, String actorEmail, String action, String targetType, String targetId, String summary) {
 		this.id = UUID.randomUUID();
+		this.projectId = projectId;
 		this.actorEmail = actorEmail;
 		this.action = action;
 		this.targetType = targetType;
@@ -44,6 +52,7 @@ public class AccessAuditEvent {
 	}
 
 	public UUID getId() { return id; }
+	public UUID getProjectId() { return projectId; }
 	public String getActorEmail() { return actorEmail; }
 	public String getAction() { return action; }
 	public String getTargetType() { return targetType; }

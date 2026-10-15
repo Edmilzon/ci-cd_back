@@ -57,7 +57,7 @@ public class ProjectService {
 		UserAccount owner = user(actor.id());
 		Project project = projects.save(new Project(slug, name, valueOrEmpty(request.description()), owner));
 		members.save(new ProjectMember(project, owner, ProjectAccessLevel.OWNER, owner));
-		audit.record(actor.email(), "PROJECT_CREATED", "PROJECT", project.getId().toString(), "Creó el proyecto " + project.getName() + ".");
+		audit.recordProject(project.getId(), actor.email(), "PROJECT_CREATED", "PROJECT", project.getId().toString(), "Creó el proyecto " + project.getName() + ".");
 		return summary(project, actor);
 	}
 
@@ -71,7 +71,7 @@ public class ProjectService {
 		Project project = access.requireManage(id, actor);
 		String name = request.name().trim();
 		project.update(name, valueOrEmpty(request.description()));
-		audit.record(actor.email(), "PROJECT_UPDATED", "PROJECT", id.toString(), "Actualizó el proyecto " + project.getName() + ".");
+		audit.recordProject(id, actor.email(), "PROJECT_UPDATED", "PROJECT", id.toString(), "Actualizó el proyecto " + project.getName() + ".");
 		return summary(project, actor);
 	}
 
@@ -80,7 +80,7 @@ public class ProjectService {
 		Project project = access.requireOwner(id, actor);
 		if (repositories.countByProject_Id(id) > 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "Desconecta primero los repositorios para archivar este proyecto.");
 		project.archive();
-		audit.record(actor.email(), "PROJECT_ARCHIVED", "PROJECT", id.toString(), "Archivó el proyecto " + project.getName() + ".");
+		audit.recordProject(id, actor.email(), "PROJECT_ARCHIVED", "PROJECT", id.toString(), "Archivó el proyecto " + project.getName() + ".");
 	}
 
 	@Transactional(readOnly = true)
@@ -104,7 +104,7 @@ public class ProjectService {
 		if (members.existsByProject_IdAndUser_Id(projectId, target.getId())) throw new ResponseStatusException(HttpStatus.CONFLICT, "La persona ya pertenece al proyecto.");
 		ProjectMember added = members.save(new ProjectMember(project, target, requested, user(actor.id())));
 		project.touch();
-		audit.record(actor.email(), "PROJECT_MEMBER_ADDED", "PROJECT_MEMBER", added.getId().toString(), "Agregó " + target.getEmail() + " al proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_MEMBER_ADDED", "PROJECT_MEMBER", added.getId().toString(), "Agregó " + target.getEmail() + " al proyecto " + project.getName() + ".");
 		return memberSummary(added);
 	}
 
@@ -124,7 +124,7 @@ public class ProjectService {
 		}
 		target.setAccessLevel(request.accessLevel());
 		project.touch();
-		audit.record(actor.email(), "PROJECT_MEMBER_UPDATED", "PROJECT_MEMBER", target.getId().toString(), "Cambió el acceso de " + target.getUser().getEmail() + " en " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_MEMBER_UPDATED", "PROJECT_MEMBER", target.getId().toString(), "Cambió el acceso de " + target.getUser().getEmail() + " en " + project.getName() + ".");
 		return memberSummary(target);
 	}
 
@@ -143,7 +143,7 @@ public class ProjectService {
 		String email = target.getUser().getEmail();
 		members.delete(target);
 		project.touch();
-		audit.record(actor.email(), "PROJECT_MEMBER_REMOVED", "PROJECT_MEMBER", target.getId().toString(), "Quitó a " + email + " del proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_MEMBER_REMOVED", "PROJECT_MEMBER", target.getId().toString(), "Quitó a " + email + " del proyecto " + project.getName() + ".");
 	}
 
 	@Transactional(readOnly = true)
@@ -164,7 +164,7 @@ public class ProjectService {
 		LinkedRepository linked = repositories.save(new LinkedRepository(project, data.connection(), repo.id(), repo.fullName(),
 			repo.htmlUrl(), repo.defaultBranch(), repo.privateRepository(), description, user(actor.id())));
 		project.touch();
-		audit.record(actor.email(), "PROJECT_REPOSITORY_CONNECTED", "PROJECT_REPOSITORY", linked.getId().toString(), "Conectó " + repo.fullName() + " al proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_REPOSITORY_CONNECTED", "PROJECT_REPOSITORY", linked.getId().toString(), "Conectó " + repo.fullName() + " al proyecto " + project.getName() + ".");
 		return repositorySummary(linked);
 	}
 
@@ -175,7 +175,7 @@ public class ProjectService {
 		if (pipelines.countByRepository_Id(linkedRepositoryId) > 0) throw new ResponseStatusException(HttpStatus.CONFLICT, "Elimina primero los pipelines asociados a este repositorio.");
 		repositories.delete(linked);
 		project.touch();
-		audit.record(actor.email(), "PROJECT_REPOSITORY_REMOVED", "PROJECT_REPOSITORY", linked.getId().toString(), "Desconectó " + linked.getFullName() + " del proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_REPOSITORY_REMOVED", "PROJECT_REPOSITORY", linked.getId().toString(), "Desconectó " + linked.getFullName() + " del proyecto " + project.getName() + ".");
 	}
 
 	private ProjectDtos.ProjectSummary summary(Project project, CdciPrincipal actor) {
@@ -185,7 +185,7 @@ public class ProjectService {
 		boolean manage = admin || (member != null && (member.getAccessLevel() == ProjectAccessLevel.OWNER || member.getAccessLevel() == ProjectAccessLevel.MAINTAINER));
 		boolean archive = admin || (member != null && member.getAccessLevel() == ProjectAccessLevel.OWNER);
 		return new ProjectDtos.ProjectSummary(project.getId(), project.getSlug(), project.getName(), project.getDescription(), role,
-			manage, archive, repositories.countByProject_Id(project.getId()), members.countByProject_Id(project.getId()), project.getCreatedAt(), project.getUpdatedAt());
+			manage, archive, manage || actor.permissionCodes().contains("AUDIT_READ"), repositories.countByProject_Id(project.getId()), members.countByProject_Id(project.getId()), project.getCreatedAt(), project.getUpdatedAt());
 	}
 
 	private UserAccount user(UUID id) { return users.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Inicia sesión nuevamente.")); }

@@ -57,6 +57,9 @@ public class PipelineDeploymentService {
 		PipelineDeployment deployment = deployments.findByPipelineRun_IdAndJobId(runId, request.jobId()).orElse(null);
 		if (deployment == null) {
 			deployment = deployments.save(new PipelineDeployment(run, request.jobId(), request.environmentName(), request.commitSha()));
+			audit.recordProject(run.getPipeline().getProject().getId(), run.getRequestedBy().getEmail(),
+				"PIPELINE_DEPLOYMENT_REQUESTED", "PIPELINE_DEPLOYMENT", deployment.getId().toString(),
+				"Solicitó el despliegue de " + run.getPipeline().getName() + " a " + deployment.getEnvironmentName() + ".");
 			String message = PipelineDeployment.isProduction(request.environmentName())
 					? "El despliegue a production espera aprobación de una persona mantenedora."
 					: "El despliegue a " + request.environmentName() + " fue solicitado a GitHub.";
@@ -87,7 +90,7 @@ public class PipelineDeploymentService {
 		try { deployment.approve(approver); }
 		catch (IllegalStateException exception) { throw new ResponseStatusException(HttpStatus.CONFLICT, "El despliegue ya no espera aprobación."); }
 		logs.save(new PipelineRunLog(deployment.getPipelineRun(), "SYSTEM", "" + actor.email() + " aprobó el despliegue a " + deployment.getEnvironmentName() + "."));
-		audit.record(actor.email(), "PIPELINE_DEPLOYMENT_APPROVED", "PIPELINE_DEPLOYMENT", deploymentId.toString(),
+		audit.recordProject(projectId, actor.email(), "PIPELINE_DEPLOYMENT_APPROVED", "PIPELINE_DEPLOYMENT", deploymentId.toString(),
 				"Aprobó el despliegue a " + deployment.getEnvironmentName() + " para " + deployment.getPipelineRun().getPipeline().getName() + ".");
 		return summary(deployment);
 	}
@@ -103,7 +106,7 @@ public class PipelineDeploymentService {
 		try { deployment.reject(reviewer); }
 		catch (IllegalStateException exception) { throw new ResponseStatusException(HttpStatus.CONFLICT, "El despliegue ya no espera aprobación."); }
 		logs.save(new PipelineRunLog(deployment.getPipelineRun(), "SYSTEM", actor.email() + " rechazó el despliegue a " + deployment.getEnvironmentName() + "."));
-		audit.record(actor.email(), "PIPELINE_DEPLOYMENT_REJECTED", "PIPELINE_DEPLOYMENT", deploymentId.toString(),
+		audit.recordProject(projectId, actor.email(), "PIPELINE_DEPLOYMENT_REJECTED", "PIPELINE_DEPLOYMENT", deploymentId.toString(),
 				"Rechazó el despliegue a " + deployment.getEnvironmentName() + " para " + deployment.getPipelineRun().getPipeline().getName() + ".");
 		return summary(deployment);
 	}
@@ -127,11 +130,17 @@ public class PipelineDeploymentService {
 		var created = github.createDeployment(run.getPipeline().getRepository().getId(), run.getId().toString(),
 				deployment.getSourceCommitSha(), deployment.getEnvironmentName(), description);
 		deployment.started(created.id(), created.htmlUrl());
+		audit.recordProject(deployment.getProject().getId(), "worker/" + request.workerId(),
+			"PIPELINE_DEPLOYMENT_STARTED", "PIPELINE_DEPLOYMENT", deployment.getId().toString(),
+			"El worker inició el despliegue a " + deployment.getEnvironmentName() + ".");
 		try {
 			github.updateDeploymentStatus(run.getPipeline().getRepository().getId(), created.id(), deployment.getEnvironmentName(),
 					"in_progress", "CDCI está ejecutando el comando de despliegue.", githubLogUrl(deployment));
 		} catch (RuntimeException exception) {
 			deployment.fail();
+			audit.recordProject(deployment.getProject().getId(), "worker/" + request.workerId(),
+				"PIPELINE_DEPLOYMENT_FAILED", "PIPELINE_DEPLOYMENT", deployment.getId().toString(),
+				"El estado inicial del despliegue a " + deployment.getEnvironmentName() + " no pudo sincronizarse con GitHub.");
 			logs.save(new PipelineRunLog(run, "SYSTEM", "No se pudo sincronizar el estado inicial del despliegue con GitHub."));
 			return summary(deployment);
 		}
@@ -159,6 +168,10 @@ public class PipelineDeploymentService {
 			logs.save(new PipelineRunLog(run, "SYSTEM", "No se pudo sincronizar el resultado final del despliegue con GitHub; el estado local conserva el resultado del worker."));
 		}
 		deployment.complete(success);
+		audit.recordProject(deployment.getProject().getId(), "worker/" + request.workerId(),
+			success ? "PIPELINE_DEPLOYMENT_SUCCEEDED" : "PIPELINE_DEPLOYMENT_FAILED", "PIPELINE_DEPLOYMENT", deployment.getId().toString(),
+			success ? "El worker completó el despliegue a " + deployment.getEnvironmentName() + "."
+					: "El worker reportó un fallo en el despliegue a " + deployment.getEnvironmentName() + ".");
 		logs.save(new PipelineRunLog(run, "SYSTEM", githubStatusSynced
 				? success ? "GitHub marcó el despliegue como exitoso." : "GitHub marcó el despliegue como fallido."
 				: success ? "CDCI marcó el despliegue como exitoso." : "CDCI marcó el despliegue como fallido."));
@@ -177,6 +190,8 @@ public class PipelineDeploymentService {
 				}
 			} catch (RuntimeException ignored) { }
 			deployment.fail();
+			audit.recordProject(deployment.getProject().getId(), "worker/system", "PIPELINE_DEPLOYMENT_FAILED",
+				"PIPELINE_DEPLOYMENT", deployment.getId().toString(), "El despliegue a " + deployment.getEnvironmentName() + " falló al interrumpirse la ejecución.");
 		}
 	}
 
@@ -194,7 +209,7 @@ public class PipelineDeploymentService {
 		PipelineRun rollback = runs.save(new PipelineRun(pipeline, previousRun.getPipelineVersion(), previousRun.getBranchName(), requester,
 				source.getSourceCommitSha(), source.getEnvironmentName(), source.getId()));
 		logs.save(new PipelineRunLog(rollback, "SYSTEM", "Rollback manual encolado para " + source.getEnvironmentName() + " al commit " + source.getSourceCommitSha() + "."));
-		audit.record(actor.email(), "PIPELINE_DEPLOYMENT_ROLLBACK_QUEUED", "PIPELINE_DEPLOYMENT", source.getId().toString(),
+		audit.recordProject(projectId, actor.email(), "PIPELINE_DEPLOYMENT_ROLLBACK_QUEUED", "PIPELINE_DEPLOYMENT", source.getId().toString(),
 				"Encoló rollback de " + pipeline.getName() + " a " + source.getSourceCommitSha() + " en " + source.getEnvironmentName() + ".");
 		return PipelineRunService.summary(rollback);
 	}

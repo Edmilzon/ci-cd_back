@@ -57,7 +57,7 @@ public class ProjectSecretService {
 			action = "PROJECT_SECRET_UPDATED";
 		}
 		project.touch();
-		audit.record(actor.email(), action, "PROJECT_SECRET", projectId + ":" + name, "Guardó el secreto " + name + " del proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), action, "PROJECT_SECRET", projectId + ":" + name, "Guardó el secreto " + name + " del proyecto " + project.getName() + ".");
 		return summary(secret);
 	}
 
@@ -68,7 +68,7 @@ public class ProjectSecretService {
 		ProjectSecret secret = secrets.findByProject_IdAndName(projectId, name).orElseThrow(ProjectSecretService::notFound);
 		secrets.delete(secret);
 		project.touch();
-		audit.record(actor.email(), "PROJECT_SECRET_DELETED", "PROJECT_SECRET", projectId + ":" + name, "Eliminó el secreto " + name + " del proyecto " + project.getName() + ".");
+		audit.recordProject(projectId, actor.email(), "PROJECT_SECRET_DELETED", "PROJECT_SECRET", projectId + ":" + name, "Eliminó el secreto " + name + " del proyecto " + project.getName() + ".");
 	}
 
 	@Transactional(readOnly = true)

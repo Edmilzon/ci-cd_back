@@ -66,7 +66,7 @@ public class PipelineRunService {
 		PipelineRun run = runs.save(new PipelineRun(pipeline, version, branch, user(actor.id())));
 		logs.save(new PipelineRunLog(run, "SYSTEM", "Ejecución manual encolada; esperando un worker aislado."));
 		project.touch();
-		audit.record(actor.email(), "PIPELINE_RUN_QUEUED", "PIPELINE_RUN", run.getId().toString(), "Encoló la ejecución manual de " + pipeline.getName() + " (v" + version.getVersionNumber() + ").");
+		audit.recordProject(projectId, actor.email(), "PIPELINE_RUN_QUEUED", "PIPELINE_RUN", run.getId().toString(), "Encoló la ejecución manual de " + pipeline.getName() + " (v" + version.getVersionNumber() + ").");
 		return summary(run);
 	}
 
