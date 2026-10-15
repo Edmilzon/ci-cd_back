@@ -119,8 +119,8 @@ public class PipelineYamlValidator {
 			if (!(document instanceof Map<?, ?> root) || !(root.get("jobs") instanceof Map<?, ?> jobs)) return List.of();
 			Set<String> names = new LinkedHashSet<>();
 			for (Object value : jobs.values()) {
-				if (value instanceof Map<?, ?> job && onlyEnvironment != null && job.get("environment") instanceof String environment
-						&& !onlyEnvironment.equalsIgnoreCase(environment)) continue;
+				if (value instanceof Map<?, ?> job && onlyEnvironment != null
+						&& (!(job.get("environment") instanceof String environment) || !onlyEnvironment.equalsIgnoreCase(environment))) continue;
 				if (value instanceof Map<?, ?> job && job.get("secrets") instanceof List<?> references) {
 					for (Object reference : references) if (reference instanceof String name && validSecretName(name)) names.add(name);
 				}

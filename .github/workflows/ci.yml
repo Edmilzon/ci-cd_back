@@ -1,0 +1,48 @@
+name: Backend CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: cdci
+          POSTGRES_USER: cdci
+          POSTGRES_PASSWORD: cdci_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cdci -d cdci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CDCI_DATABASE_URL: jdbc:postgresql://localhost:5432/cdci
+      CDCI_DATABASE_USERNAME: cdci
+      CDCI_DATABASE_PASSWORD: cdci_test_only
+      CDCI_REGISTRATION_ENABLED: "true"
+      CDCI_GITHUB_TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CDCI_SECRET_ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+      - name: Run backend tests and migration smoke test
+        run: ./gradlew test
