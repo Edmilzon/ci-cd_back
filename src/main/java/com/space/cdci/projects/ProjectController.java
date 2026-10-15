@@ -25,8 +25,9 @@ import com.space.cdci.integrations.github.GitHubIntegrationService;
 @RequestMapping("/api/projects")
 public class ProjectController {
 	private final ProjectService projects;
+	private final ProjectSecretService secrets;
 
-	public ProjectController(ProjectService projects) { this.projects = projects; }
+	public ProjectController(ProjectService projects, ProjectSecretService secrets) { this.projects = projects; this.secrets = secrets; }
 
 	@GetMapping
 	public List<ProjectDtos.ProjectSummary> list(@AuthenticationPrincipal CdciPrincipal actor) { return projects.list(actor); }
@@ -80,4 +81,21 @@ public class ProjectController {
 	@DeleteMapping("/{projectId}/repositories/{repositoryId}")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void removeRepository(@PathVariable UUID projectId, @PathVariable UUID repositoryId, @AuthenticationPrincipal CdciPrincipal actor) { projects.removeRepository(projectId, repositoryId, actor); }
+
+	@GetMapping("/{projectId}/secrets")
+	public List<ProjectSecretDtos.SecretSummary> secrets(@PathVariable UUID projectId, @AuthenticationPrincipal CdciPrincipal actor) {
+		return secrets.list(projectId, actor);
+	}
+
+	@PutMapping("/{projectId}/secrets/{name}")
+	public ProjectSecretDtos.SecretSummary saveSecret(@PathVariable UUID projectId, @PathVariable String name,
+			@Valid @RequestBody ProjectSecretDtos.WriteSecretRequest request, @AuthenticationPrincipal CdciPrincipal actor) {
+		return secrets.upsert(projectId, name, request, actor);
+	}
+
+	@DeleteMapping("/{projectId}/secrets/{name}")
+	@ResponseStatus(HttpStatus.NO_CONTENT)
+	public void deleteSecret(@PathVariable UUID projectId, @PathVariable String name, @AuthenticationPrincipal CdciPrincipal actor) {
+		secrets.delete(projectId, name, actor);
+	}
 }

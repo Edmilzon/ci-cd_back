@@ -25,6 +25,7 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_GITHUB_CLIENT_ID` / `CDCI_GITHUB_CLIENT_SECRET` | Credenciales de la GitHub App | Sin valores por defecto |
 | `CDCI_GITHUB_CALLBACK_URL` | URL registrada como callback OAuth de la App | `http://localhost:8080/api/integrations/github/callback` |
 | `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` | Clave base64 de 32 bytes para AES-256-GCM en tokens/refresh tokens persistidos | Sin valor por defecto |
+| `CDCI_SECRET_ENCRYPTION_KEY` | Clave base64 independiente de 32 bytes para secretos de pipeline cifrados con AES-256-GCM | Sin valor por defecto |
 | `CDCI_RUNNER_TOKEN` | Token aleatorio compartido entre el backend y el worker de ejecuciones | Sin valor por defecto |
 | `CDCI_RUN_RETENTION_DAYS` | Retención de runs terminales y sus logs en PostgreSQL | `90` días |
 | `CDCI_RUNNER_DEFAULT_IMAGE` | Imagen por defecto para trabajos sin `image` | `node:22-bookworm-slim` |
@@ -32,6 +33,8 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 | `CDCI_RUNNER_MEMORY_MB` / `CDCI_RUNNER_CPU_COUNT` / `CDCI_RUNNER_PIDS_LIMIT` | Límites de recursos de cada contenedor de trabajo | `2048` / `1` / `256` |
 
 Genera `CDCI_RUNNER_TOKEN` con un secreto aleatorio distinto por ambiente. En PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Define el mismo valor en el proceso del backend y en `cdci_back/.env`; no lo guardes en Git.
+
+Genera `CDCI_SECRET_ENCRYPTION_KEY` con el mismo comando de PowerShell, pero usa una clave diferente de la clave GitHub y conserva un respaldo seguro de ella. Si se pierde o rota sin migrar/re-cifrar los datos, los secretos existentes no podrán descifrarse. La API solo permite administrar metadatos y nunca devuelve valores en claro.
 
 Las contraseñas se guardan con Argon2id. Spring Security administra la cookie de sesión `HttpOnly`; las rutas mutables requieren el token CSRF entregado por `GET /api/auth/csrf`. No guardes la cookie de sesión en almacenamiento web. En despliegues, usa secretos gestionados para credenciales de base de datos y bootstrap, TLS, orígenes CORS exactos y cookie `Secure`.
 
@@ -81,8 +84,7 @@ Formato inicial soportado:
 ```yaml
 name: Build frontend
 triggers:
-  - push
-  - pull_request
+  - manual
 jobs:
   build:
     name: Build
@@ -95,7 +97,9 @@ jobs:
         run: npm run build
 ```
 
-Por ahora se admiten `triggers` `push`, `pull_request` y `manual`; de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los trabajos se ejecutan en el orden declarado y aceptan `image` y `network: none|bridge`; sin imagen usan la predeterminada. `bridge` habilita acceso de salida a Internet sin una lista de destinos permitidos; úsalo solo cuando el trabajo necesite descargar dependencias. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses`, expresiones ni variables secretas. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
+En v1 se admite únicamente `triggers: [manual]`; los triggers `push` y `pull_request` fallan la validación. Hay de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los trabajos se ejecutan en el orden declarado y aceptan `image`, `network: none|bridge` y una lista opcional `secrets`; sin imagen usan la predeterminada. `bridge` habilita acceso de salida a Internet sin una lista de destinos permitidos; úsalo solo cuando el trabajo necesite descargar dependencias. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses` ni expresiones. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
+
+Los mantenedores del proyecto pueden crear, reemplazar y eliminar secretos en **Proyecto → Secretos de CI**. Se guardan cifrados con AES-256-GCM y una clave dedicada. La lista solo expone nombre, fecha y actor. Un job debe declarar, por ejemplo, `secrets: [NPM_TOKEN]`; el worker resuelve el valor al reclamar el run y solo pasa al contenedor el conjunto declarado. Configura cada nombre en el proyecto antes de encolar el run. Los valores se enmascaran en la salida del worker, incluidos secretos que crucen fragmentos de log, pero un job puede transformar o codificar una credencial: nunca imprimas, registres ni compartas secretos en la salida. Usa workers dedicados y código confiable.
 
 - `GET /api/projects/{projectId}/pipelines` lista definiciones.
 - `POST /api/projects/{projectId}/pipelines/validate` valida `{ "yaml": "..." }` sin guardar.
@@ -108,6 +112,6 @@ Las ejecuciones manuales persisten una solicitud `QUEUED` con snapshot de versi�
 
 Para desarrollo, configura el mismo `CDCI_RUNNER_TOKEN` para el backend y `cdci_back/.env`, luego inicia el worker: `docker compose --profile runner up --build -d runner`. El perfil levanta un daemon Docker-in-Docker privado para jobs efímeros; cada paso corre como UID no root, sin capacidades Linux, con filesystem base de solo lectura, límite de memoria/CPU/PIDs y timeout. La red del job es `none` por defecto; `bridge` permite egress irrestricto. Usa esta modalidad en una máquina Linux dedicada al runner, no junto a servicios de producción: ejecutar código de repositorio sigue siendo una frontera de seguridad. El perfil no publica puertos del daemon Docker. En producción usa `CDCI_RUNNER_API_URL` con HTTPS/TLS; el valor `host.docker.internal` es para desarrollo local.
 
-Los campos `triggers` siguen siendo declarativos: en esta versión solo se inician ejecuciones manuales. No se exponen secretos a los jobs, no se suben artefactos y todavía no se implementa un destino de despliegue. Los runs terminales y sus logs se purgan después de 90 días.
+Los campos `triggers` permiten solo ejecuciones manuales. No se suben artefactos y todavía no se implementa un destino de despliegue. Los runs terminales y sus logs se purgan después de 90 días.
 
 Referencias oficiales: [autorización de usuario para GitHub Apps](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app), [permisos de lectura de repositorios](https://docs.github.com/en/rest/repos/repos#list-repositories-for-the-authenticated-user), [renovar tokens](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens) y [revocar una autorización](https://docs.github.com/en/rest/apps/oauth-applications#delete-an-app-authorization).

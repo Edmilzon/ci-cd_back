@@ -7,6 +7,7 @@ import com.space.cdci.identity.UserRepository;
 import com.space.cdci.integrations.github.GitHubIntegrationService;
 import com.space.cdci.projects.Project;
 import com.space.cdci.projects.ProjectAccessService;
+import com.space.cdci.projects.ProjectSecretService;
 import jakarta.validation.Valid;
 import java.time.Instant;
 import java.util.List;
@@ -30,12 +31,15 @@ public class PipelineRunService {
 	private final ProjectAccessService access;
 	private final AccessAuditService audit;
 	private final GitHubIntegrationService github;
+	private final ProjectSecretService projectSecrets;
+	private final PipelineYamlValidator yamlValidator;
 	private final int retentionDays;
 	private final java.util.regex.Pattern credentialPattern = java.util.regex.Pattern.compile("(?i)(ghu_[a-z0-9_]{20,}|github_pat_[a-z0-9_]{20,}|gh[pousr]_[a-z0-9]{20,})");
 
 	public PipelineRunService(PipelineDefinitionRepository pipelines, PipelineVersionRepository versions, PipelineRunRepository runs,
 			PipelineRunLogRepository logs, UserRepository users, ProjectAccessService access, AccessAuditService audit,
-			GitHubIntegrationService github, @Value("${cdci.runner.retention-days:90}") int retentionDays) {
+			GitHubIntegrationService github, ProjectSecretService projectSecrets, PipelineYamlValidator yamlValidator,
+			@Value("${cdci.runner.retention-days:90}") int retentionDays) {
 		this.pipelines = pipelines;
 		this.versions = versions;
 		this.runs = runs;
@@ -44,6 +48,8 @@ public class PipelineRunService {
 		this.access = access;
 		this.audit = audit;
 		this.github = github;
+		this.projectSecrets = projectSecrets;
+		this.yamlValidator = yamlValidator;
 		this.retentionDays = Math.max(1, Math.min(retentionDays, 400));
 	}
 
@@ -89,12 +95,25 @@ public class PipelineRunService {
 		PipelineRun run = runs.findFirstByStatusOrderByRequestedAtAsc(PipelineRunStatus.QUEUED).orElse(null);
 		if (run == null) return null;
 		var repository = run.getPipeline().getRepository();
-		var sourceAccess = github.runnerAccess(repository.getId());
 		run.claim(workerId);
+		try {
+			var sourceAccess = github.runnerAccess(repository.getId());
+			var resolvedSecrets = projectSecrets.resolveForWorker(repository.getProject().getId(),
+				yamlValidator.referencedSecrets(run.getPipelineVersion().getYamlDefinition()));
 		logs.save(new PipelineRunLog(run, "SYSTEM", "Worker " + safeWorkerId(workerId) + " inició la ejecución."));
 		return new PipelineDtos.WorkerClaim(run.getId(), run.getPipeline().getId(), run.getPipeline().getName(),
 			run.getPipelineVersion().getVersionNumber(), run.getBranchName(), sourceAccess.fullName(), sourceAccess.cloneUrl(),
-			sourceAccess.accessToken(), run.getPipelineVersion().getYamlDefinition(), run.getStartedAt());
+			sourceAccess.accessToken(), resolvedSecrets, run.getPipelineVersion().getYamlDefinition(), run.getStartedAt());
+		} catch (ResponseStatusException exception) {
+			String reason = exception.getReason() == null ? "No se pudo preparar el acceso del worker." : exception.getReason();
+			run.complete(false, reason);
+			logs.save(new PipelineRunLog(run, "SYSTEM", "La ejecución falló durante la preparación: " + reason));
+			return null;
+		} catch (RuntimeException exception) {
+			run.complete(false, "No se pudieron preparar las credenciales de GitHub y los secretos requeridos.");
+			logs.save(new PipelineRunLog(run, "SYSTEM", "La ejecución falló durante la preparación de credenciales."));
+			return null;
+		}
 	}
 
 	@Transactional

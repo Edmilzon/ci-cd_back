@@ -37,8 +37,15 @@ def env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
 
 
-def redact(value: str, secret: str = "") -> str:
-    if secret:
+def valid_secret_name(name: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]{0,99}", name)) and name not in {
+        "HOME", "PATH", "CI", "ENV", "IFS", "SHELLOPTS", "BASHOPTS",
+    } and not name.startswith(("CDCI_", "DOCKER_", "GIT_", "LD_", "DYLD_", "BASH_", "PYTHON", "SSH_", "SUDO_"))
+
+
+def redact(value: str, github_token: str = "", secrets: list[str] | tuple[str, ...] = ()) -> str:
+    protected_values = [value for value in [github_token, *secrets] if value and len(value) >= 8]
+    for secret in sorted(set(protected_values), key=len, reverse=True):
         value = value.replace(secret, "[credencial ocultada]")
     return TOKEN_PATTERN.sub("[credencial ocultada]", value)
 
@@ -89,16 +96,28 @@ class BackendClient:
 
 
 class LogSink:
-    def __init__(self, client: BackendClient, run_id: str, worker_id: str, github_token: str):
+    def __init__(self, client: BackendClient, run_id: str, worker_id: str, github_token: str, secrets: dict[str, str]):
         self.client = client
         self.run_id = run_id
         self.worker_id = worker_id
         self.github_token = github_token
+        self.secrets = list(secrets.values())
+        self.pending: dict[str, str] = {}
+        self.redaction_overlap = max([256, *(len(value) - 1 for value in self.secrets)])
         self.total_chars = 0
         self.truncated = False
 
-    def write(self, stream: str, value: str) -> None:
-        value = redact(value, self.github_token)
+    def write(self, stream: str, value: str, final: bool = False) -> None:
+        if stream in {"STDOUT", "STDERR"}:
+            buffered = self.pending.get(stream, "") + value
+            if not final:
+                safe_length = max(0, len(buffered) - self.redaction_overlap)
+                self.pending[stream] = buffered[safe_length:]
+                value = buffered[:safe_length]
+            else:
+                self.pending.pop(stream, None)
+                value = buffered
+        value = redact(value, self.github_token, self.secrets)
         for offset in range(0, len(value), LOG_CHUNK_CHARS):
             if self.total_chars >= MAX_LOG_CHARS:
                 if not self.truncated:
@@ -110,6 +129,9 @@ class LogSink:
                 continue
             self.client.append_log(self.run_id, self.worker_id, stream, chunk)
             self.total_chars += len(chunk)
+
+    def flush(self, stream: str) -> None:
+        self.write(stream, "", final=True)
 
 
 class LeaseKeeper:
@@ -206,32 +228,38 @@ def prepare_workspace_permissions(workspace: Path) -> None:
             os.chown(os.path.join(current, entry), 65532, 65532, follow_symlinks=False)
 
 
-def container_args(image: str, network: str, workspace: Path, command: str, memory_mb: int, cpu_count: int, pids: int) -> list[str]:
+def container_args(image: str, network: str, workspace: Path, command: str, memory_mb: int, cpu_count: int,
+                  pids: int, secrets: dict[str, str]) -> list[str]:
     if not isinstance(image, str) or not IMAGE_PATTERN.fullmatch(image):
         raise ValueError("El trabajo usa una imagen de contenedor no válida.")
     if network not in {"none", "bridge"}:
         raise ValueError("La red del trabajo debe ser none o bridge.")
-    return [
+    secret_env_args = [argument for name in sorted(secrets) for argument in ("--env", name)]
+    args = [
         "docker", "run", "--detach", "--pull=missing", "--label", "cdci.managed=true", "--network", network,
         "--memory", f"{memory_mb}m", "--cpus", str(cpu_count), "--pids-limit", str(pids),
         "--read-only", "--security-opt", "no-new-privileges", "--cap-drop", "ALL",
         "--user", "65532:65532", "--tmpfs", "/tmp:rw,nosuid,size=256m",
         "--ulimit", "nofile=1024:1024", "--volume", f"{workspace}:/workspace:rw",
         "--workdir", "/workspace", "--env", "CI=true", "--env", "HOME=/tmp",
-        "--entrypoint", "/bin/sh", image, "-c", command,
+        *secret_env_args, "--entrypoint", "/bin/sh", image, "-c", command,
     ]
+    return args
 
 
 def run_step(image: str, network: str, workspace: Path, command: str, sink: LogSink,
-             lease_lost: threading.Event, timeout_seconds: int, memory_mb: int, cpu_count: int, pids: int) -> tuple[bool, str]:
-    args = container_args(image, network, workspace, command, memory_mb, cpu_count, pids)
+             lease_lost: threading.Event, timeout_seconds: int, memory_mb: int, cpu_count: int, pids: int,
+             secrets: dict[str, str]) -> tuple[bool, str]:
+    args = container_args(image, network, workspace, command, memory_mb, cpu_count, pids, secrets)
+    process_environment = os.environ.copy()
+    process_environment.update(secrets)
     try:
-        started = subprocess.run(args, capture_output=True, text=True, timeout=300, check=False)
+        started = subprocess.run(args, capture_output=True, text=True, env=process_environment, timeout=300, check=False)
     except subprocess.TimeoutExpired:
         return False, "Se agotó el tiempo máximo para preparar la imagen del paso."
     if started.returncode != 0:
-        message = redact((started.stderr or "").strip(), sink.github_token)
-        sink.write("STDERR", message or "Docker no pudo iniciar el contenedor del paso.")
+        message = redact((started.stderr or "").strip(), sink.github_token, sink.secrets)
+        sink.write("STDERR", message or "Docker no pudo iniciar el contenedor del paso.", final=True)
         return False, "No se pudo iniciar el contenedor del paso."
 
     container_id = started.stdout.strip()
@@ -294,7 +322,7 @@ def run_step(image: str, network: str, workspace: Path, command: str, sink: LogS
             output, error = wait.communicate()
             reason = reason or "Docker no confirmó la finalización del paso."
         if wait.returncode != 0:
-            details = redact((error or "").strip(), sink.github_token)
+            details = redact((error or "").strip(), sink.github_token, sink.secrets)
             reason = reason or details or "Docker no pudo esperar la finalización del paso."
         elif not reason:
             try:
@@ -312,12 +340,13 @@ def run_step(image: str, network: str, workspace: Path, command: str, sink: LogS
                     break
                 sink.write("STDOUT", chunk.decode("utf-8", errors="replace"))
         reader.join(timeout=5)
+        sink.flush("STDOUT")
         if reason:
-            sink.write("STDERR", reason + "\n")
+            sink.write("STDERR", reason + "\n", final=True)
             return False, reason
         if exit_code != 0:
             failure = f"El comando terminó con código {exit_code}."
-            sink.write("STDERR", failure + "\n")
+            sink.write("STDERR", failure + "\n", final=True)
             return False, failure
         return True, ""
     finally:
@@ -337,7 +366,12 @@ def run_step(image: str, network: str, workspace: Path, command: str, sink: LogS
 def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost: threading.Event) -> tuple[bool, str]:
     run_id = str(claim.get("runId", ""))
     token = str(claim.get("githubAccessToken", ""))
-    sink = LogSink(client, run_id, worker_id, token)
+    secrets = claim.get("secrets", {})
+    if not isinstance(secrets, dict) or any(not isinstance(name, str) or not valid_secret_name(name)
+                                             or not isinstance(value, str) or not 8 <= len(value) <= 4096
+                                             for name, value in secrets.items()):
+        return False, "El worker recibió una configuración de secretos no válida."
+    sink = LogSink(client, run_id, worker_id, token, secrets)
     timeout_seconds = env_int("CDCI_RUNNER_STEP_TIMEOUT_SECONDS", 1800, 30, 1800)
     run_timeout_seconds = env_int("CDCI_RUNNER_RUN_TIMEOUT_SECONDS", 21600, 60, 21600)
     memory_mb = env_int("CDCI_RUNNER_MEMORY_MB", 2048, 256, 8192)
@@ -369,6 +403,11 @@ def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost:
                 network = job.get("network", "none")
                 if not isinstance(image, str) or not IMAGE_PATTERN.fullmatch(image) or network not in {"none", "bridge"}:
                     raise ValueError(f"La configuración del trabajo {job_id} no es válida.")
+                requested_secrets = job.get("secrets", [])
+                if not isinstance(requested_secrets, list) or any(not isinstance(name, str) or not valid_secret_name(name)
+                                                                  or name not in secrets for name in requested_secrets):
+                    raise ValueError(f"Falta configurar uno o más secretos del trabajo {job_id}.")
+                job_secrets = {name: secrets[name] for name in requested_secrets}
                 sink.write("SYSTEM", f"Iniciando trabajo {job_id} en {image} · red {network}.\n")
                 for index, step in enumerate(job["steps"], start=1):
                     if lease_lost.is_set():
@@ -381,13 +420,13 @@ def run_pipeline(claim: dict, client: BackendClient, worker_id: str, lease_lost:
                     if remaining <= 0:
                         raise RuntimeError(f"La ejecución superó el límite total de {run_timeout_seconds} segundos.")
                     success, failure = run_step(image, network, workspace, step["run"], sink, lease_lost,
-                                                min(timeout_seconds, remaining), memory_mb, cpu_count, pids)
+                                                min(timeout_seconds, remaining), memory_mb, cpu_count, pids, job_secrets)
                     if not success:
                         raise RuntimeError(f"{job_id} · {name}: {failure}")
                 sink.write("SYSTEM", f"✓ Trabajo {job_id} completado.\n")
         return True, ""
     except Exception as error:
-        failure = redact(str(error), token).strip() or "La ejecución no se pudo completar."
+        failure = redact(str(error), token, sink.secrets).strip() or "La ejecución no se pudo completar."
         sink.write("SYSTEM", f"Ejecución fallida: {failure}\n")
         return False, failure[:1000]
 

@@ -5,6 +5,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public final class PipelineDtos {
@@ -32,5 +33,5 @@ public final class PipelineDtos {
 			@Size(max = 2000) String failureMessage) {}
 	public record WorkerHeartbeatRequest(@jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Pattern(regexp = "[A-Za-z0-9._-]{1,100}") String workerId) {}
 	public record WorkerClaim(UUID runId, UUID pipelineId, String pipelineName, int version, String branchName,
-			String repositoryName, String repositoryCloneUrl, String githubAccessToken, String yaml, Instant claimedAt) {}
+			String repositoryName, String repositoryCloneUrl, String githubAccessToken, Map<String, String> secrets, String yaml, Instant claimedAt) {}
 }

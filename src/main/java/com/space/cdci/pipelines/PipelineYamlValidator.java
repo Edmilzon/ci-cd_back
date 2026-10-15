@@ -2,6 +2,7 @@ package com.space.cdci.pipelines;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,8 +14,9 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 @Component
 public class PipelineYamlValidator {
 	private static final Set<String> ROOT_KEYS = Set.of("name", "triggers", "jobs");
-	private static final Set<String> JOB_KEYS = Set.of("name", "image", "network", "steps");
+	private static final Set<String> JOB_KEYS = Set.of("name", "image", "network", "secrets", "steps");
 	private static final Set<String> STEP_KEYS = Set.of("name", "run");
+	private static final java.util.regex.Pattern SECRET_NAME = java.util.regex.Pattern.compile("[A-Z_][A-Z0-9_]{0,99}");
 
 	public PipelineDtos.ValidationResult validate(String source) {
 		List<String> errors = new ArrayList<>();
@@ -23,12 +25,7 @@ public class PipelineYamlValidator {
 
 		Object document;
 		try {
-			LoaderOptions options = new LoaderOptions();
-			options.setAllowDuplicateKeys(false);
-			options.setMaxAliasesForCollections(0);
-			options.setCodePointLimit(65536);
-			options.setNestingDepthLimit(20);
-			Yaml yaml = new Yaml(new SafeConstructor(options));
+			Yaml yaml = safeYaml();
 			var documents = yaml.loadAll(source).iterator();
 			if (!documents.hasNext()) return invalid("La definición no contiene un documento YAML.");
 			document = documents.next();
@@ -83,6 +80,7 @@ public class PipelineYamlValidator {
 				if (job.containsKey("network") && !"none".equals(network) && !"bridge".equals(network)) {
 					errors.add("La red del trabajo " + jobId + " debe ser none o bridge.");
 				}
+				validateSecrets(job, jobId, errors);
 				Object stepsValue = job.get("steps");
 				if (!(stepsValue instanceof List<?> steps) || steps.isEmpty()) {
 					errors.add("El trabajo " + jobId + " debe incluir al menos un paso.");
@@ -106,6 +104,56 @@ public class PipelineYamlValidator {
 			}
 		}
 		return new PipelineDtos.ValidationResult(errors.isEmpty(), name, jobCount, stepCount, List.copyOf(errors));
+	}
+
+	public List<String> referencedSecrets(String source) {
+		try {
+			Object document = safeYaml().load(source);
+			if (!(document instanceof Map<?, ?> root) || !(root.get("jobs") instanceof Map<?, ?> jobs)) return List.of();
+			Set<String> names = new LinkedHashSet<>();
+			for (Object value : jobs.values()) {
+				if (value instanceof Map<?, ?> job && job.get("secrets") instanceof List<?> references) {
+					for (Object reference : references) if (reference instanceof String name && validSecretName(name)) names.add(name);
+				}
+			}
+			return List.copyOf(names);
+		} catch (RuntimeException exception) {
+			return List.of();
+		}
+	}
+
+	private static void validateSecrets(Map<?, ?> job, String jobId, List<String> errors) {
+		if (!job.containsKey("secrets")) return;
+		if (!(job.get("secrets") instanceof List<?> references)) {
+			errors.add("secrets del trabajo " + jobId + " debe ser una lista de nombres de secretos.");
+			return;
+		}
+		if (references.size() > 50) errors.add("El trabajo " + jobId + " permite hasta 50 secretos.");
+		Set<String> seen = new HashSet<>();
+		for (Object reference : references) {
+			if (!(reference instanceof String name) || !validSecretName(name)) {
+				errors.add("Cada secreto del trabajo " + jobId + " debe usar un nombre válido en mayúsculas.");
+				continue;
+			}
+			if (!seen.add(name)) errors.add("El trabajo " + jobId + " no puede repetir el secreto " + name + ".");
+		}
+	}
+
+	private static boolean validSecretName(String name) {
+		return SECRET_NAME.matcher(name).matches() && !name.equals("HOME") && !name.equals("PATH") && !name.equals("CI")
+				&& !name.equals("ENV") && !name.equals("IFS") && !name.equals("SHELLOPTS") && !name.equals("BASHOPTS")
+				&& !name.startsWith("CDCI_") && !name.startsWith("DOCKER_") && !name.startsWith("GIT_")
+				&& !name.startsWith("LD_") && !name.startsWith("DYLD_") && !name.startsWith("BASH_")
+				&& !name.startsWith("PYTHON") && !name.startsWith("SSH_") && !name.startsWith("SUDO_");
+	}
+
+	private static Yaml safeYaml() {
+		LoaderOptions options = new LoaderOptions();
+		options.setAllowDuplicateKeys(false);
+		options.setMaxAliasesForCollections(0);
+		options.setCodePointLimit(65536);
+		options.setNestingDepthLimit(20);
+		return new Yaml(new SafeConstructor(options));
 	}
 
 	private static void checkKeys(Map<?, ?> value, Set<String> allowed, String place, List<String> errors) {
