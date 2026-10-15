@@ -57,7 +57,7 @@ public class SecurityConfiguration {
 				.requestMatchers("/api/runner/**").permitAll()
 				.requestMatchers("/api/auth/**").authenticated()
 				.requestMatchers("/api/admin/**").authenticated()
-				.requestMatchers("/api/projects/**", "/api/integrations/github/**").authenticated()
+				.requestMatchers("/api/projects/**", "/api/integrations/github/**", "/api/dashboard").authenticated()
 				.anyRequest().denyAll())
 			.formLogin(form -> form
 				.loginProcessingUrl("/api/auth/login")

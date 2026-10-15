@@ -65,6 +65,8 @@ El backend es la autoridad para identidad y autorización; ocultar acciones en l
 
 La API permite crear/editar/archivar proyectos, administrar miembros con acceso `OWNER`, `MAINTAINER`, `DEVELOPER` o `VIEWER`, y vincular repositorios GitHub. Solo se pueden agregar cuentas CDCI existentes. Las rutas `/api/projects` verifican membresía y nivel de acceso en el servidor; los cambios se registran en la bitácora de auditoría.
 
+`GET /api/dashboard` entrega métricas y hasta 50 ejecuciones recientes únicamente de los proyectos visibles para la sesión. Las métricas de día usan `America/La_Paz`; la tasa de éxito y la mediana usan runs terminados de los últimos 30 días.
+
 La primera integración usa una **GitHub App** y tokens de usuario con permisos de lectura de metadatos y contenidos. No uses un personal access token. Configúrala así:
 
 1. Registra la App y agrega `CDCI_GITHUB_CALLBACK_URL` como callback del flujo web OAuth. Activa tokens de usuario expirables y autoriza `offline_access` para permitir renovación.
