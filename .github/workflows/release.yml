@@ -1,0 +1,162 @@
+name: Backend release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Annotated release tag on main (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+      target_environment:
+        description: Deployment environment
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cdci-backend-release-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Verify and package release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_version: ${{ steps.release.outputs.release_version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
+    steps:
+      - name: Check out release workflow source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate release tag and source commit
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Run this workflow from the protected main branch." >&2
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "The release tag must use vMAJOR.MINOR.PATCH without leading zeroes." >&2
+            exit 1
+          fi
+          git fetch --force origin "+refs/heads/main:refs/remotes/origin/main" "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          if [[ "$(git cat-file -t "refs/tags/${RELEASE_TAG}")" != "tag" ]]; then
+            echo "The release must be an annotated Git tag." >&2
+            exit 1
+          fi
+          source_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main; then
+            echo "The tagged commit must already be reachable from origin/main." >&2
+            exit 1
+          fi
+          source_date_epoch="$(git show -s --format=%ct "$source_sha")"
+          release_version="${RELEASE_TAG#v}"
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=$release_version"
+            echo "source_sha=$source_sha"
+            echo "source_date_epoch=$source_date_epoch"
+          } >> "$GITHUB_OUTPUT"
+          git checkout --detach "$source_sha"
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build the versioned boot JAR
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        run: ./gradlew bootJar -PreleaseVersion="$RELEASE_VERSION"
+
+      - name: Create reproducible release archive and checksum
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          SOURCE_DATE_EPOCH: ${{ steps.release.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+          content_dir="$RUNNER_TEMP/cdci-backend-content"
+          artifact_dir="$RUNNER_TEMP/cdci-backend-artifact"
+          mkdir -p "$content_dir" "$artifact_dir"
+          cp "build/libs/cdci-${RELEASE_VERSION}.jar" "$content_dir/app.jar"
+          printf '%s\n' "$RELEASE_TAG" > "$content_dir/RELEASE_TAG"
+          printf '%s\n' "$SOURCE_SHA" > "$content_dir/SOURCE_SHA"
+          tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+            -C "$content_dir" -cf - . | gzip -n > "$artifact_dir/cdci-backend.tar.gz"
+          (cd "$artifact_dir" && sha256sum cdci-backend.tar.gz > cdci-backend.tar.gz.sha256)
+
+      - name: Store release artifact in GitHub Actions
+        uses: actions/upload-artifact@v7
+        with:
+          name: cdci-backend-${{ github.run_id }}
+          path: ${{ runner.temp }}/cdci-backend-artifact/
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    name: Deploy backend to ${{ inputs.target_environment }}
+    needs: package
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+    environment:
+      name: ${{ inputs.target_environment }}
+      url: ${{ vars.CDCI_PUBLIC_URL }}
+    env:
+      CDCI_DEPLOY_HOST: ${{ vars.CDCI_DEPLOY_HOST }}
+      CDCI_DEPLOY_USER: ${{ vars.CDCI_DEPLOY_USER }}
+      CDCI_DEPLOY_PORT: ${{ vars.CDCI_DEPLOY_PORT }}
+      CDCI_PUBLIC_URL: ${{ vars.CDCI_PUBLIC_URL }}
+      CDCI_DEPLOY_SSH_KEY: ${{ secrets.CDCI_DEPLOY_SSH_KEY }}
+      CDCI_DEPLOY_KNOWN_HOSTS: ${{ secrets.CDCI_DEPLOY_KNOWN_HOSTS }}
+    steps:
+      - name: Require a configured HTTPS environment URL
+        run: |
+          set -euo pipefail
+          if [[ -z "$CDCI_PUBLIC_URL" || "$CDCI_PUBLIC_URL" != https://* ]]; then
+            echo "Set CDCI_PUBLIC_URL to the HTTPS URL for this GitHub environment." >&2
+            exit 1
+          fi
+
+      - name: Check out the exact release source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.package.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download verified build artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: cdci-backend-${{ github.run_id }}
+          path: package
+
+      - name: Deploy with automatic rollback on failed readiness
+        env:
+          RELEASE_TAG: ${{ needs.package.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.package.outputs.source_sha }}
+        run: bash ops/deploy-release.sh package/cdci-backend.tar.gz "$RELEASE_TAG" "$SOURCE_SHA"

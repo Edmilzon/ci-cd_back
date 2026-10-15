@@ -39,3 +39,5 @@ Record the backup age, restore duration, resulting Flyway rank, and whether the 
 ## Runner and deployment incidents
 
 Use the runner's container logs and CDCI run logs to identify the failed step. A missing heartbeat causes the lease recovery job to fail the run; verify Docker capacity and runner authentication before queuing a new run. For deployment incidents, inspect the project's deployment history and GitHub Deployment status, confirm the pinned commit SHA, and use CDCI rollback only after the project owner approves the recovery plan. Production rollback still requires an independent approval.
+
+GitHub Actions releases of the CDCI application (the frontend and backend themselves) use the separate [release runbook](RELEASE.md). Their deployment workflow rolls back the `current` symlink after a failed readiness probe; CDCI pipeline rollback and application-release rollback are distinct operations.

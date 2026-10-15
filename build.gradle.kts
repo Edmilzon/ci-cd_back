@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+
 plugins {
 	java
 	id("org.springframework.boot") version "4.1.1"
@@ -5,7 +7,7 @@ plugins {
 }
 
 group = "com.space"
-version = "0.0.1-SNAPSHOT"
+version = providers.gradleProperty("releaseVersion").orElse("0.0.1-SNAPSHOT").get()
 
 java {
 	toolchain {
@@ -37,4 +39,9 @@ dependencies {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+}
+
+tasks.withType<AbstractArchiveTask>().configureEach {
+	isPreserveFileTimestamps = false
+	isReproducibleFileOrder = true
 }

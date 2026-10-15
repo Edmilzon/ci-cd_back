@@ -13,6 +13,8 @@ La aplicación crea el esquema mediante Flyway y carga los roles de sistema al i
 
 ## Configuración
 
+Para publicar releases manuales por GitHub Actions en `staging` y `production`, configurar los Environments y preparar rollback automático, sigue el [runbook de releases](ops/RELEASE.md).
+
 | Variable | Uso | Valor local |
 |---|---|---|
 | `CDCI_DATABASE_URL` | JDBC de PostgreSQL | `jdbc:postgresql://localhost:5432/cdci` |
