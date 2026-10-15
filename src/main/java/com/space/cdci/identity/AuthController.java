@@ -19,13 +19,15 @@ public class AuthController {
 	private final UserRepository users;
 	private final PasswordChangeService passwordChangeService;
 	private final PasswordResetService passwordResetService;
+	private final EmailVerificationService emailVerificationService;
 
 	public AuthController(IdentityService identityService, UserRepository users, PasswordChangeService passwordChangeService,
-			PasswordResetService passwordResetService) {
+			PasswordResetService passwordResetService, EmailVerificationService emailVerificationService) {
 		this.identityService = identityService;
 		this.users = users;
 		this.passwordChangeService = passwordChangeService;
 		this.passwordResetService = passwordResetService;
+		this.emailVerificationService = emailVerificationService;
 	}
 
 	@GetMapping("/csrf")
@@ -33,8 +35,27 @@ public class AuthController {
 
 	@PostMapping("/register")
 	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.CREATED)
-	public AuthDtos.UserResponse register(@Valid @RequestBody AuthDtos.RegisterRequest request) {
-		return identityService.register(request);
+	public AuthDtos.RegisterResponse register(@Valid @RequestBody AuthDtos.RegisterRequest request, jakarta.servlet.http.HttpServletRequest httpRequest) {
+		return identityService.register(request, httpRequest);
+	}
+
+	@GetMapping("/email-verification/status")
+	public AuthDtos.EmailVerificationStatusResponse emailVerificationStatus() {
+		return new AuthDtos.EmailVerificationStatusResponse(emailVerificationService.isRequired());
+	}
+
+	@PostMapping("/email-verification/resend")
+	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.ACCEPTED)
+	public AuthDtos.MessageResponse resendVerification(@Valid @RequestBody AuthDtos.EmailVerificationRequest request,
+			jakarta.servlet.http.HttpServletRequest httpRequest) {
+		return new AuthDtos.MessageResponse(emailVerificationService.resend(request, httpRequest));
+	}
+
+	@PostMapping("/email-verification/confirm")
+	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.NO_CONTENT)
+	public void confirmVerification(@Valid @RequestBody AuthDtos.EmailVerificationConfirmRequest request,
+			jakarta.servlet.http.HttpServletRequest httpRequest) {
+		emailVerificationService.confirm(request, httpRequest);
 	}
 
 	@GetMapping("/password-reset/status")

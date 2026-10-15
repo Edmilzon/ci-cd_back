@@ -26,13 +26,17 @@ public final class AuthDtos {
 			@NotBlank @Size(min = 12, max = 128) String newPassword) {}
 
 	public record PasswordResetStatusResponse(boolean enabled) {}
+	public record EmailVerificationRequest(@NotBlank @Email @Size(max = 254) String email) {}
+	public record EmailVerificationConfirmRequest(@NotBlank @Size(max = 64) String token) {}
+	public record EmailVerificationStatusResponse(boolean required) {}
+	public record RegisterResponse(boolean verificationRequired, boolean emailVerified) {}
 
-	public record UserResponse(UUID id, String email, String fullName, Set<String> roles, Set<String> permissions, Instant createdAt) {
+	public record UserResponse(UUID id, String email, String fullName, boolean emailVerified, Set<String> roles, Set<String> permissions, Instant createdAt) {
 		public static UserResponse from(UserAccount user) {
 			Set<String> roles = user.getRoles().stream().map(Role::getCode).collect(java.util.stream.Collectors.toUnmodifiableSet());
 			Set<String> permissions = user.getRoles().stream().flatMap(role -> role.getPermissions().stream())
 					.map(Permission::getCode).collect(java.util.stream.Collectors.toUnmodifiableSet());
-			return new UserResponse(user.getId(), user.getEmail(), user.getFullName(), roles, permissions, user.getCreatedAt());
+			return new UserResponse(user.getId(), user.getEmail(), user.getFullName(), user.isEmailVerified(), roles, permissions, user.getCreatedAt());
 		}
 	}
 

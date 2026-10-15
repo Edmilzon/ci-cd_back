@@ -56,6 +56,7 @@ public final class CdciPrincipal implements UserDetails, CredentialsContainer, S
 		Set<String> roleCodes = account.getRoles().stream().map(Role::getCode).collect(Collectors.toUnmodifiableSet());
 		Set<String> permissions = account.getRoles().stream().flatMap(role -> role.getPermissions().stream())
 				.map(Permission::getCode).collect(Collectors.toUnmodifiableSet());
-		return new CdciPrincipal(account.getId(), account.getEmail(), account.getFullName(), account.isEnabled(), roleCodes, permissions, account.getPasswordHash());
+		return new CdciPrincipal(account.getId(), account.getEmail(), account.getFullName(),
+				account.isEnabled() && account.isEmailVerified(), roleCodes, permissions, account.getPasswordHash());
 	}
 }

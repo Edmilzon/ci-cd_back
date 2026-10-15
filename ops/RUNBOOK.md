@@ -22,6 +22,8 @@ Operational baseline for the internal beta. The API does not claim an availabili
 
 Keep `CDCI_EMAIL_ENABLED=false` until SMTP host, sender, authentication, and STARTTLS settings are confirmed. For a release that enables recovery, send a test request to a controlled account and verify receipt, one-time consumption, expiry, session invalidation, and the provider's delivery logs. The API returns an identical response for existing and missing accounts. Monitor SMTP failure warnings without logging recovery links or tokens. Configure a trusted edge rate limit as well as CDCI's PostgreSQL-backed limits, especially when the API sits behind a shared proxy.
 
+Before enabling public registration, set `CDCI_EMAIL_VERIFICATION_REQUIRED=true`, enable SMTP delivery, and verify a new account end to end. Existing users are marked verified by migration; new users cannot log in before confirming the 24-hour single-use link. Login and registration thresholds are shared by the PostgreSQL HMAC buckets. CDCI still requires MFA before public registration is considered ready.
+
 ## Encrypted PostgreSQL backups
 
 Create a dedicated `age` recipient for the environment. Keep its private identity in a separate secrets vault and recovery location; the backup host needs only the public recipient. Keep the CDCI GitHub-token and pipeline-secret encryption keys in that same separate recovery plan, never beside the database archive.

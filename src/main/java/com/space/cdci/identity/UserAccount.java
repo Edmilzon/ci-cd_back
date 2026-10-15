@@ -31,6 +31,9 @@ public class UserAccount {
 	@Column(nullable = false)
 	private boolean enabled;
 
+	@Column(name = "email_verified", nullable = false)
+	private boolean emailVerified;
+
 	@Column(name = "created_at", nullable = false)
 	private Instant createdAt;
 
@@ -44,12 +47,17 @@ public class UserAccount {
 	protected UserAccount() {}
 
 	public UserAccount(String email, String fullName, String passwordHash, Set<Role> roles) {
+		this(email, fullName, passwordHash, roles, true);
+	}
+
+	public UserAccount(String email, String fullName, String passwordHash, Set<Role> roles, boolean emailVerified) {
 		this.id = UUID.randomUUID();
 		this.email = email;
 		this.fullName = fullName;
 		this.passwordHash = passwordHash;
 		this.roles = new HashSet<>(roles);
 		this.enabled = true;
+		this.emailVerified = emailVerified;
 		this.createdAt = Instant.now();
 		this.updatedAt = this.createdAt;
 	}
@@ -59,10 +67,12 @@ public class UserAccount {
 	public String getFullName() { return fullName; }
 	public String getPasswordHash() { return passwordHash; }
 	public boolean isEnabled() { return enabled; }
+	public boolean isEmailVerified() { return emailVerified; }
 	public Instant getCreatedAt() { return createdAt; }
 	public Instant getUpdatedAt() { return updatedAt; }
 	public Set<Role> getRoles() { return roles; }
 	public void setEnabled(boolean enabled) { this.enabled = enabled; this.updatedAt = Instant.now(); }
 	public void setRoles(Set<Role> roles) { this.roles = new HashSet<>(roles); this.updatedAt = Instant.now(); }
 	public void changePasswordHash(String passwordHash) { this.passwordHash = passwordHash; this.updatedAt = Instant.now(); }
+	public void verifyEmail() { this.emailVerified = true; this.updatedAt = Instant.now(); }
 }

@@ -22,6 +22,7 @@ Para publicar releases manuales por GitHub Actions en `staging` y `production`, 
 | `CDCI_FRONTEND_ORIGIN` | Origen CORS permitido, explícito | `http://localhost:3000` |
 | `CDCI_REGISTRATION_ENABLED` | Habilita el registro; el default de aplicación es cerrado, el ejemplo local lo activa | `false` en despliegues; `true` en `.env.example` |
 | `CDCI_EMAIL_ENABLED` | Activa el envío de correos de recuperación | `false`; requiere configurar SMTP |
+| `CDCI_EMAIL_VERIFICATION_REQUIRED` | Impide iniciar sesión hasta verificar el correo de cuentas nuevas | `false` local; activar junto con correo y SMTP antes de abrir registro público |
 | `CDCI_EMAIL_FROM` | Remitente de correo de CDCI | `no-reply@cdci.local` local |
 | `CDCI_SMTP_HOST` / `CDCI_SMTP_PORT` | Servidor SMTP para recuperación | `localhost:1025` |
 | `CDCI_SMTP_USERNAME` / `CDCI_SMTP_PASSWORD` | Credenciales SMTP cuando el servidor exige autenticación | Sin valor por defecto |
@@ -44,7 +45,7 @@ Para publicar releases manuales por GitHub Actions en `staging` y `production`, 
 
 Genera `CDCI_RUNNER_TOKEN` con un secreto aleatorio distinto por ambiente. En PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Define el mismo valor en el proceso del backend y en `cdci_back/.env`; no lo guardes en Git.
 
-Genera `CDCI_IDENTITY_RATE_LIMIT_HMAC_KEY` con al menos 32 bytes aleatorios por ambiente y guárdala en el gestor de secretos; no uses el texto de ejemplo en producción. Activa `CDCI_EMAIL_ENABLED=true` solo después de configurar un SMTP confiable y TLS/autenticación según el proveedor. El registro público debe seguir cerrado hasta habilitar verificación de correo y MFA.
+Genera `CDCI_IDENTITY_RATE_LIMIT_HMAC_KEY` con al menos 32 bytes aleatorios por ambiente y guárdala en el gestor de secretos; usa el mismo valor en todas las réplicas de un ambiente, cámbialo entre ambientes y no uses el texto de ejemplo en producción. Activa `CDCI_EMAIL_ENABLED=true` solo después de configurar un SMTP confiable y TLS/autenticación según el proveedor. El registro público debe seguir cerrado hasta habilitar verificación de correo y MFA.
 
 Genera `CDCI_SECRET_ENCRYPTION_KEY` con el mismo comando de PowerShell, pero usa una clave diferente de la clave GitHub y conserva un respaldo seguro de ella. Si se pierde o rota sin migrar/re-cifrar los datos, los secretos existentes no podrán descifrarse. La API solo permite administrar metadatos y nunca devuelve valores en claro.
 
@@ -61,8 +62,11 @@ Las contraseñas se guardan con Argon2id. Spring Security administra la cookie d
 - `GET /api/auth/password-reset/status` indica si la recuperación por correo está habilitada en este ambiente.
 - `POST /api/auth/password-reset/request` acepta `{ "email": "..." }` y siempre responde con el mismo mensaje para evitar revelar si una cuenta existe. Envía un enlace solo cuando el correo está habilitado y la cuenta está activa.
 - `POST /api/auth/password-reset/confirm` acepta `{ "token": "...", "newPassword": "..." }`, consume un token una sola vez, cambia la contraseña y cierra todas las sesiones existentes.
+- `GET /api/auth/email-verification/status` indica si las cuentas nuevas requieren verificación.
+- `POST /api/auth/email-verification/resend` acepta `{ "email": "..." }` y mantiene una respuesta genérica para cuentas existentes, verificadas o no registradas.
+- `POST /api/auth/email-verification/confirm` acepta `{ "token": "..." }`; verifica la cuenta solo una vez y el enlace vence a las 24 horas.
 
-Las solicitudes de recuperación se limitan por IP (20/15 min), correo (3/15 min) y confirmación por IP (30/15 min). Los buckets están en PostgreSQL con upsert atómico para operar entre réplicas; sus identificadores se guardan con HMAC y se purgan periódicamente. Respeta el origen TCP real en el proxy frontal y aplica también límites de borde si muchos usuarios comparten una IP de proxy.
+Los intentos de login y registro tienen límites compartidos por PostgreSQL; la recuperación y verificación también limitan por IP/correo. Los buckets usan upsert atómico y HMAC para operar entre réplicas sin guardar los identificadores en claro. Configura límites de borde y considera que los usuarios tras el mismo proxy comparten el límite por IP.
 ## Roles y permisos
 
 Al iniciar, CDCI crea `ADMIN`, `MAINTAINER`, `DEVELOPER` y `VIEWER` con un catálogo explícito de permisos. Los roles de sistema son de solo lectura; un administrador puede crear roles personalizados, asignarles permisos y conceder esos roles a cuentas existentes. Una cuenta nueva solo recibe `VIEWER`.

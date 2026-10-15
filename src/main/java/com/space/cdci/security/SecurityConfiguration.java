@@ -1,5 +1,6 @@
 package com.space.cdci.security;
 
+import com.space.cdci.identity.AuthRequestRateLimiter;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -43,7 +44,7 @@ public class SecurityConfiguration {
 	}
 
 	@Bean
-	SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper) throws Exception {
+	SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper, AuthRequestRateLimiter rateLimiter) throws Exception {
 		http
 			.cors(Customizer.withDefaults())
 			.csrf(csrf -> {
@@ -55,7 +56,8 @@ public class SecurityConfiguration {
 				.requestMatchers(HttpMethod.GET, "/api/health/live", "/api/health/ready").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/password-reset/status").permitAll()
-				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/password-reset/request", "/api/auth/password-reset/confirm").permitAll()
+				.requestMatchers(HttpMethod.GET, "/api/auth/email-verification/status").permitAll()
+				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/password-reset/request", "/api/auth/password-reset/confirm", "/api/auth/email-verification/resend", "/api/auth/email-verification/confirm").permitAll()
 				.requestMatchers("/api/runner/**").permitAll()
 				.requestMatchers("/api/auth/**").authenticated()
 				.requestMatchers("/api/admin/**").authenticated()
@@ -76,6 +78,7 @@ public class SecurityConfiguration {
 			.exceptionHandling(errors -> errors
 				.authenticationEntryPoint((request, response, exception) -> writeError(objectMapper, response, HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "Inicia sesión para continuar."))
 				.accessDeniedHandler((request, response, exception) -> writeError(objectMapper, response, HttpStatus.FORBIDDEN, "FORBIDDEN", "No tienes permiso para realizar esta acción.")));
+		http.addFilterBefore(new LoginRateLimitFilter(rateLimiter, objectMapper), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
 		return http.build();
 	}
 
