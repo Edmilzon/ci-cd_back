@@ -6,7 +6,7 @@ API de CDCI con Spring Boot 4, Java 21, PostgreSQL, Spring Security y sesiones p
 
 1. Copia `.env.example` como `.env` y configura un correo y contraseña de administrador propios.
 2. Inicia PostgreSQL con `docker compose up -d`.
-3. Exporta esas variables al entorno de la terminal y arranca `gradlew bootRun` (en PowerShell: `./gradlew.bat bootRun`).
+3. Arranca `./gradlew bootRun` (en PowerShell: `./gradlew.bat bootRun`). La aplicación carga `ci-cd_back/.env` automáticamente; también puedes exportar las variables en la terminal o en el IDE, que tienen prioridad.
 4. Configura el frontend en `cdci_front/.env.local` con `NEXT_PUBLIC_API_URL=http://localhost:8080`.
 
 La aplicación crea el esquema mediante Flyway y carga los roles de sistema al iniciar. Solo crea la cuenta inicial si se definen `CDCI_BOOTSTRAP_ADMIN_EMAIL` y `CDCI_BOOTSTRAP_ADMIN_PASSWORD`; no hay una contraseña admin integrada. La contraseña inicial debe tener entre 12 y 128 caracteres. El correo no vuelve a recibir privilegios si ya existe.
@@ -38,7 +38,7 @@ Para publicar releases manuales por GitHub Actions en `staging` y `production`, 
 | `CDCI_GITHUB_CLIENT_ID` / `CDCI_GITHUB_CLIENT_SECRET` | Credenciales de la GitHub App | Sin valores por defecto |
 | `CDCI_GITHUB_CALLBACK_URL` | URL registrada como callback OAuth de la App | `http://localhost:8080/api/integrations/github/callback` |
 | `CDCI_GITHUB_TOKEN_ENCRYPTION_KEY` | Clave base64 de 32 bytes para AES-256-GCM en tokens/refresh tokens persistidos | Sin valor por defecto |
-| `CDCI_SECRET_ENCRYPTION_KEY` | Clave base64 independiente de 32 bytes para secretos de pipeline cifrados con AES-256-GCM | Sin valor por defecto |
+| `CDCI_SECRET_ENCRYPTION_KEY` | Clave base64 independiente de 32 bytes para secretos de pipeline y contraseñas SSH cifradas con AES-256-GCM | Sin valor por defecto |
 | `CDCI_RUNNER_TOKEN` | Token aleatorio compartido entre el backend y el worker de ejecuciones | Sin valor por defecto |
 | `CDCI_RUN_RETENTION_DAYS` | Retención de runs terminales y sus logs en PostgreSQL | `90` días |
 | `CDCI_AUDIT_RETENTION_DAYS` | Retención de eventos de auditoría antes de purgarlos | `365` días |
@@ -52,7 +52,7 @@ Genera `CDCI_IDENTITY_RATE_LIMIT_HMAC_KEY` con al menos 32 bytes aleatorios por 
 
 MFA usa TOTP RFC 6238 (6 dígitos, pasos de 30 s), almacena el secreto con AES-256-GCM, evita aceptar dos veces el mismo paso y limita los intentos de desafío en PostgreSQL. Al activarla se generan diez códigos de recuperación de 128 bits; CDCI guarda sus hashes, los muestra una sola vez y consume cada código atómicamente. Las sesiones vencen después de 30 minutos sin actividad y, por defecto, a las 12 horas absolutas desde el inicio de sesión. Configura la hora del host con NTP y conserva la clave MFA en el gestor de secretos: perderla impide descifrar los TOTP existentes.
 
-Genera `CDCI_SECRET_ENCRYPTION_KEY` con el mismo comando de PowerShell, pero usa una clave diferente de la clave GitHub y conserva un respaldo seguro de ella. Si se pierde o rota sin migrar/re-cifrar los datos, los secretos existentes no podrán descifrarse. La API solo permite administrar metadatos y nunca devuelve valores en claro.
+Genera `CDCI_SECRET_ENCRYPTION_KEY` con el mismo comando de PowerShell, pero usa una clave diferente de la clave GitHub y conserva un respaldo seguro de ella. Si se pierde o rota sin migrar/re-cifrar los datos, los secretos y las contraseñas SSH existentes no podrán descifrarse. La API solo permite administrar metadatos y nunca devuelve valores en claro.
 
 Las contraseñas se guardan con Argon2id. Spring Security administra la cookie de sesión `HttpOnly`; las rutas mutables requieren el token CSRF entregado por `GET /api/auth/csrf`. No guardes la cookie de sesión en almacenamiento web. En despliegues, usa secretos gestionados para credenciales de base de datos y bootstrap, TLS, orígenes CORS exactos y cookie `Secure`.
 
@@ -131,6 +131,21 @@ jobs:
 En v1 se admite únicamente `triggers: [manual]`; los triggers `push` y `pull_request` fallan la validación. Hay de 1 a 20 trabajos y de 1 a 50 pasos por trabajo. Los trabajos se ejecutan en el orden declarado y aceptan `image`, `network: none|bridge` y una lista opcional `secrets`; sin imagen usan la predeterminada. `bridge` habilita acceso de salida a Internet sin una lista de destinos permitidos; úsalo solo cuando el trabajo necesite descargar dependencias. Los pasos usan `run` y texto YAML plano; no se admiten acciones `uses` ni expresiones. El validador limita la definición a 64 KB y rechaza claves duplicadas y etiquetas YAML de clases Java. La versión guarda el texto exacto y su hash SHA-256.
 
 Los mantenedores del proyecto pueden crear, reemplazar y eliminar secretos en **Proyecto → Secretos de CI**. Se guardan cifrados con AES-256-GCM y una clave dedicada. La lista solo expone nombre, fecha y actor. Un job debe declarar, por ejemplo, `secrets: [NPM_TOKEN]`; el worker resuelve el valor al reclamar el run y solo pasa al contenedor el conjunto declarado. Configura cada nombre en el proyecto antes de encolar el run. Los valores se enmascaran en la salida del worker, incluidos secretos que crucen fragmentos de log, pero un job puede transformar o codificar una credencial: nunca imprimas, registres ni compartas secretos en la salida. Usa workers dedicados y código confiable.
+
+### Servidores administrados por SSH
+
+Los OWNER, MAINTAINER y administradores del proyecto pueden registrar servidores en **Proyecto → Servidores** con nombre, host o IP, puerto, usuario y contraseña SSH. La contraseña se cifra con la misma clave AES-256-GCM de los secretos y nunca se devuelve a la interfaz. La conexión SSH se abre desde el backend, por lo que el servidor de CDCI debe tener salida de red hacia el host y el servicio SSH debe aceptar autenticación por contraseña.
+
+Cada servidor permite:
+
+- **Probar** la conexión; el backend ejecuta una comprobación mínima y registra la fecha del último éxito.
+- Abrir una **consola** y ejecutar un comando por vez. La salida se devuelve a la interfaz, con código de salida, duración y un límite de 128 KB; el comando tiene un máximo de 30 segundos.
+- **Editar** el host, puerto, usuario o la contraseña. Dejar la contraseña vacía conserva la actual.
+- **Eliminar** el servidor y su credencial cifrada.
+
+La actividad registra quién agregó, actualizó, probó o ejecutó un comando, pero no guarda el comando, la salida ni la contraseña. En la primera conexión se acepta la huella del host; verifica siempre que la IP o el dominio sean correctos. Esta consola es una herramienta de administración y no reemplaza la ejecución aislada de los pipelines: para despliegues reproducibles sigue usando jobs con `environment`, `secrets` y comandos `run`.
+
+Endpoints: `GET|POST /api/projects/{projectId}/servers`, `PUT|DELETE /api/projects/{projectId}/servers/{serverId}`, `POST .../{serverId}/test` y `POST .../{serverId}/commands`.
 
 - `GET /api/projects/{projectId}/pipelines` lista definiciones.
 - `POST /api/projects/{projectId}/pipelines/validate` valida `{ "yaml": "..." }` sin guardar.

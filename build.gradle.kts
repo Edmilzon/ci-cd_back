@@ -32,6 +32,7 @@ dependencies {
 	implementation("org.flywaydb:flyway-database-postgresql")
 	implementation("org.postgresql:postgresql")
 	implementation("org.bouncycastle:bcprov-jdk18on:1.86")
+	implementation("com.github.mwiede:jsch:0.2.25")
 	implementation("org.yaml:snakeyaml:2.6")
 	implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")

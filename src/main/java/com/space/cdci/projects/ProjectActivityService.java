@@ -42,6 +42,7 @@ public class ProjectActivityService {
 			case "PIPELINE" -> List.of("PIPELINE", "PIPELINE_RUN");
 			case "DEPLOYMENT" -> List.of("PIPELINE_DEPLOYMENT");
 			case "SECRET" -> List.of("PROJECT_SECRET");
+			case "SERVER" -> List.of("PROJECT_SERVER");
 			default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "La categoría de actividad no es válida.");
 		};
 	}
