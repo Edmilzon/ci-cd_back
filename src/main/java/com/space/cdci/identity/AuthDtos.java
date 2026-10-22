@@ -26,6 +26,14 @@ public final class AuthDtos {
 			@NotBlank @Size(min = 12, max = 128) String newPassword) {}
 
 	public record PasswordResetStatusResponse(boolean enabled) {}
+	public record MfaLoginRequest(@NotBlank @Size(max = 64) String code) {}
+	public record MfaSetupRequest(@NotBlank @Size(max = 128) String currentPassword) {}
+	public record MfaConfirmRequest(@NotBlank @Size(min = 6, max = 6) String code) {}
+	public record MfaRecoveryCodesRequest(@NotBlank @Size(max = 128) String currentPassword, @NotBlank @Size(max = 64) String code) {}
+	public record MfaDisableRequest(@NotBlank @Size(max = 128) String currentPassword, @NotBlank @Size(max = 64) String code) {}
+	public record MfaStatusResponse(boolean available, boolean enabled, int recoveryCodesRemaining) {}
+	public record MfaSetupResponse(String secret, String otpauthUri, Instant expiresAt) {}
+	public record MfaRecoveryCodesResponse(boolean enabled, java.util.List<String> recoveryCodes) {}
 	public record RegistrationStatusResponse(boolean enabled) {}
 	public record EmailVerificationRequest(@NotBlank @Email @Size(max = 254) String email) {}
 	public record EmailVerificationConfirmRequest(@NotBlank @Size(max = 64) String token) {}

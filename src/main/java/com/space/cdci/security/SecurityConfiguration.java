@@ -1,6 +1,9 @@
 package com.space.cdci.security;
 
 import com.space.cdci.identity.AuthRequestRateLimiter;
+import com.space.cdci.identity.CdciPrincipal;
+import com.space.cdci.identity.MfaService;
+import java.time.Duration;
 import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -14,6 +17,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextHolderFilter;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.web.cors.CorsConfiguration;
@@ -44,7 +49,8 @@ public class SecurityConfiguration {
 	}
 
 	@Bean
-	SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper, AuthRequestRateLimiter rateLimiter) throws Exception {
+	SecurityFilterChain securityFilterChain(HttpSecurity http, ObjectMapper objectMapper, AuthRequestRateLimiter rateLimiter,
+			MfaService mfaService, @Value("${cdci.identity.absolute-session-lifetime:12h}") Duration absoluteSessionLifetime) throws Exception {
 		http
 			.cors(Customizer.withDefaults())
 			.csrf(csrf -> {
@@ -59,6 +65,7 @@ public class SecurityConfiguration {
 				.requestMatchers(HttpMethod.GET, "/api/auth/password-reset/status").permitAll()
 				.requestMatchers(HttpMethod.GET, "/api/auth/email-verification/status").permitAll()
 				.requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login", "/api/auth/password-reset/request", "/api/auth/password-reset/confirm", "/api/auth/email-verification/resend", "/api/auth/email-verification/confirm").permitAll()
+				.requestMatchers(HttpMethod.POST, "/api/auth/mfa/login", "/api/auth/mfa/setup", "/api/auth/mfa/confirm").permitAll()
 				.requestMatchers("/api/runner/**").permitAll()
 				.requestMatchers("/api/auth/**").authenticated()
 				.requestMatchers("/api/admin/**").authenticated()
@@ -68,7 +75,7 @@ public class SecurityConfiguration {
 				.loginProcessingUrl("/api/auth/login")
 				.usernameParameter("email")
 				.passwordParameter("password")
-				.successHandler(loginSuccessHandler(objectMapper))
+				.successHandler(loginSuccessHandler(objectMapper, mfaService))
 				.failureHandler(loginFailureHandler(objectMapper)))
 			.logout(logout -> logout
 				.logoutUrl("/api/auth/logout")
@@ -80,11 +87,30 @@ public class SecurityConfiguration {
 				.authenticationEntryPoint((request, response, exception) -> writeError(objectMapper, response, HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED", "Inicia sesión para continuar."))
 				.accessDeniedHandler((request, response, exception) -> writeError(objectMapper, response, HttpStatus.FORBIDDEN, "FORBIDDEN", "No tienes permiso para realizar esta acción.")));
 		http.addFilterBefore(new LoginRateLimitFilter(rateLimiter, objectMapper), org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class);
+		http.addFilterAfter(new AbsoluteSessionExpirationFilter(absoluteSessionLifetime), SecurityContextHolderFilter.class);
 		return http.build();
 	}
 
-	private AuthenticationSuccessHandler loginSuccessHandler(ObjectMapper mapper) {
+	private AuthenticationSuccessHandler loginSuccessHandler(ObjectMapper mapper, MfaService mfaService) {
 		return (request, response, authentication) -> {
+			if (authentication.getPrincipal() instanceof CdciPrincipal principal
+					&& (mfaService.isEnabled(principal.id()) || mfaService.isRequiredForLogin())) {
+				boolean setupRequired = !mfaService.isEnabled(principal.id());
+				var session = request.getSession(true);
+				session.setAttribute(MfaService.PENDING_USER_ATTRIBUTE, principal.id().toString());
+				session.setAttribute(MfaService.PENDING_AT_ATTRIBUTE, java.time.Instant.now().toEpochMilli());
+				session.setAttribute(MfaService.PENDING_SETUP_ATTRIBUTE, setupRequired);
+				session.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+				request.removeAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+				org.springframework.security.core.context.SecurityContextHolder.clearContext();
+				response.setStatus(HttpStatus.OK.value());
+				response.setContentType("application/json");
+				response.setCharacterEncoding("UTF-8");
+				mapper.writeValue(response.getOutputStream(), java.util.Map.of(
+						"authenticated", false, "mfaRequired", true, "mfaSetupRequired", setupRequired));
+				return;
+			}
+			request.getSession(true).setAttribute(MfaService.AUTHENTICATED_AT_ATTRIBUTE, java.time.Instant.now().toEpochMilli());
 			response.setStatus(HttpStatus.OK.value());
 			response.setContentType("application/json");
 			response.setCharacterEncoding("UTF-8");

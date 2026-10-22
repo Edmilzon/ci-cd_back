@@ -20,7 +20,10 @@ Para publicar releases manuales por GitHub Actions en `staging` y `production`, 
 | `CDCI_DATABASE_URL` | JDBC de PostgreSQL | `jdbc:postgresql://localhost:5432/cdci` |
 | `CDCI_DATABASE_USERNAME` / `CDCI_DATABASE_PASSWORD` | Usuario y contraseña de base de datos | `cdci` / `cdci_dev_only` |
 | `CDCI_FRONTEND_ORIGIN` | Origen CORS permitido, explícito | `http://localhost:3000` |
-| `CDCI_REGISTRATION_ENABLED` | Habilita el registro; el default de aplicación es cerrado, el ejemplo local lo activa | `false` en despliegues; `true` en `.env.example` |
+| `CDCI_REGISTRATION_ENABLED` | Habilita el registro; al activarlo, MFA se exige por defecto y se valida al iniciar la aplicación | `false`; abrirlo solo después de preparar correo y MFA |
+| `CDCI_MFA_REQUIRED` | Exige un segundo factor a todas las cuentas al iniciar sesión | Hereda `CDCI_REGISTRATION_ENABLED`; fuerza `true` para exigirlo antes de abrir el registro |
+| `CDCI_MFA_ENCRYPTION_KEY` | Clave Base64 independiente de 32 bytes para cifrar secretos TOTP con AES-256-GCM | Sin valor; obligatoria cuando MFA es requerida |
+| `CDCI_ABSOLUTE_SESSION_LIFETIME` | Límite absoluto de una sesión además del vencimiento por inactividad | `12h` |
 | `CDCI_EMAIL_ENABLED` | Activa el envío de correos de recuperación | `false`; requiere configurar SMTP |
 | `CDCI_EMAIL_VERIFICATION_REQUIRED` | Impide iniciar sesión hasta verificar el correo de cuentas nuevas | `false` local; activar junto con correo y SMTP antes de abrir registro público |
 | `CDCI_EMAIL_FROM` | Remitente de correo de CDCI | `no-reply@cdci.local` local |
@@ -45,7 +48,9 @@ Para publicar releases manuales por GitHub Actions en `staging` y `production`, 
 
 Genera `CDCI_RUNNER_TOKEN` con un secreto aleatorio distinto por ambiente. En PowerShell: `$b = New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`. Define el mismo valor en el proceso del backend y en `cdci_back/.env`; no lo guardes en Git.
 
-Genera `CDCI_IDENTITY_RATE_LIMIT_HMAC_KEY` con al menos 32 bytes aleatorios por ambiente y guárdala en el gestor de secretos; usa el mismo valor en todas las réplicas de un ambiente, cámbialo entre ambientes y no uses el texto de ejemplo en producción. Activa `CDCI_EMAIL_ENABLED=true` solo después de configurar un SMTP confiable y TLS/autenticación según el proveedor. El registro público debe seguir cerrado hasta habilitar verificación de correo y MFA.
+Genera `CDCI_IDENTITY_RATE_LIMIT_HMAC_KEY` con al menos 32 bytes aleatorios por ambiente y guárdala en el gestor de secretos; usa el mismo valor en todas las réplicas de un ambiente, cámbialo entre ambientes y no uses el texto de ejemplo en producción. Activa `CDCI_EMAIL_ENABLED=true` solo después de configurar un SMTP confiable y TLS/autenticación según el proveedor. El registro público debe seguir cerrado hasta habilitar verificación de correo y MFA. Para abrirlo, fija `CDCI_REGISTRATION_ENABLED=true`, `CDCI_MFA_REQUIRED=true`, `CDCI_EMAIL_VERIFICATION_REQUIRED=true` y genera claves independientes de 32 bytes Base64 para `CDCI_MFA_ENCRYPTION_KEY` y las demás claves de cifrado; la aplicación rechaza el arranque si se abre el registro sin la política MFA o su clave.
+
+MFA usa TOTP RFC 6238 (6 dígitos, pasos de 30 s), almacena el secreto con AES-256-GCM, evita aceptar dos veces el mismo paso y limita los intentos de desafío en PostgreSQL. Al activarla se generan diez códigos de recuperación de 128 bits; CDCI guarda sus hashes, los muestra una sola vez y consume cada código atómicamente. Las sesiones vencen después de 30 minutos sin actividad y, por defecto, a las 12 horas absolutas desde el inicio de sesión. Configura la hora del host con NTP y conserva la clave MFA en el gestor de secretos: perderla impide descifrar los TOTP existentes.
 
 Genera `CDCI_SECRET_ENCRYPTION_KEY` con el mismo comando de PowerShell, pero usa una clave diferente de la clave GitHub y conserva un respaldo seguro de ella. Si se pierde o rota sin migrar/re-cifrar los datos, los secretos existentes no podrán descifrarse. La API solo permite administrar metadatos y nunca devuelve valores en claro.
 
@@ -56,6 +61,7 @@ Las contraseñas se guardan con Argon2id. Spring Security administra la cookie d
 - `GET /api/auth/csrf` prepara y devuelve el token CSRF.
 - `POST /api/auth/register` crea una cuenta nueva con rol básico de lectura.
 - `POST /api/auth/login` recibe `application/x-www-form-urlencoded` con `email` y `password`.
+- Si la cuenta tiene MFA o la política la exige, el login devuelve un desafío no autenticado; `POST /api/auth/mfa/login` completa TOTP o un código de recuperación. `GET /api/auth/mfa/status`, `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/confirm`, `POST /api/auth/mfa/recovery-codes` y `POST /api/auth/mfa/disable` gestionan la configuración y requieren CSRF en escrituras.
 - `GET /api/auth/me` devuelve el perfil de la sesión activa.
 - `POST /api/auth/logout` invalida la sesión actual.
 - `PUT /api/auth/password` valida la contraseña actual, cambia la contraseña y cierra las otras sesiones.
