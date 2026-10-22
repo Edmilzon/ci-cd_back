@@ -1,0 +1,2 @@
+ALTER TABLE pipeline_versions
+    ALTER COLUMN sha256 TYPE VARCHAR(64) USING sha256::VARCHAR(64);

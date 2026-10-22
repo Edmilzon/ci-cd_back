@@ -31,7 +31,28 @@ public class AuthController {
 	}
 
 	@GetMapping("/csrf")
-	public AuthDtos.CsrfResponse csrf(CsrfToken token) { return new AuthDtos.CsrfResponse(token.getToken()); }
+	public AuthDtos.CsrfResponse csrf(CsrfToken token, jakarta.servlet.http.HttpServletRequest request,
+			jakarta.servlet.http.HttpServletResponse response) {
+		// csrf.spa() masks the request attribute token for BREACH protection; JavaScript needs
+		// the raw token persisted in XSRF-TOKEN so the request handler can validate the header.
+		token.getToken();
+		String cookiePrefix = "XSRF-TOKEN=";
+		String persistedCookie = response.getHeaders("Set-Cookie").stream()
+				.filter(value -> value.startsWith(cookiePrefix))
+				.findFirst()
+				.orElse(null);
+		if (persistedCookie != null) {
+			int end = persistedCookie.indexOf(';', cookiePrefix.length());
+			String value = persistedCookie.substring(cookiePrefix.length(), end < 0 ? persistedCookie.length() : end);
+			return new AuthDtos.CsrfResponse(value);
+		}
+		if (request.getCookies() != null) {
+			for (jakarta.servlet.http.Cookie cookie : request.getCookies()) {
+				if ("XSRF-TOKEN".equals(cookie.getName())) return new AuthDtos.CsrfResponse(cookie.getValue());
+			}
+		}
+		throw new IllegalStateException("No se pudo emitir el token CSRF.");
+	}
 
 	@PostMapping("/register")
 	@org.springframework.web.bind.annotation.ResponseStatus(HttpStatus.CREATED)
