@@ -134,7 +134,7 @@ Los mantenedores del proyecto pueden crear, reemplazar y eliminar secretos en **
 
 ### Servidores administrados por SSH
 
-Los OWNER, MAINTAINER y administradores del proyecto pueden registrar servidores en **Proyecto → Servidores** con nombre, host o IP, puerto, usuario y contraseña SSH. La contraseña se cifra con la misma clave AES-256-GCM de los secretos y nunca se devuelve a la interfaz. La conexión SSH se abre desde el backend, por lo que el servidor de CDCI debe tener salida de red hacia el host y el servicio SSH debe aceptar autenticación por contraseña.
+Los OWNER, MAINTAINER y administradores del proyecto pueden registrar servidores en **Proyecto → Servidores** con nombre, host o IP, puerto, usuario, contraseña SSH y huella SHA-256 verificada del host. La contraseña se cifra con la misma clave AES-256-GCM de los secretos y nunca se devuelve a la interfaz. Antes de enviar credenciales, el backend exige que la clave pública SSH presentada coincida con la huella fijada. La conexión SSH se abre desde el backend, por lo que el servidor de CDCI debe tener salida de red hacia el host y el servicio SSH debe aceptar autenticación por contraseña.
 
 Cada servidor permite:
 
@@ -143,7 +143,9 @@ Cada servidor permite:
 - **Editar** el host, puerto, usuario o la contraseña. Dejar la contraseña vacía conserva la actual.
 - **Eliminar** el servidor y su credencial cifrada.
 
-La actividad registra quién agregó, actualizó, probó o ejecutó un comando, pero no guarda el comando, la salida ni la contraseña. En la primera conexión se acepta la huella del host; verifica siempre que la IP o el dominio sean correctos. Esta consola es una herramienta de administración y no reemplaza la ejecución aislada de los pipelines: para despliegues reproducibles sigue usando jobs con `environment`, `secrets` y comandos `run`.
+Obtén la huella en el servidor, por ejemplo con `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256`, y confírmala por un canal confiable antes de guardarla. No se usa confianza automática de primera conexión ni `ssh-keyscan` como fuente de confianza. Al cambiar las claves del host, verifica la nueva huella fuera de CDCI y actualiza el servidor en la interfaz. Los registros existentes sin huella deberán editarse antes de volver a probar o abrir la consola.
+
+La actividad registra quién agregó, actualizó, probó o ejecutó un comando, pero no guarda el comando, la salida ni la contraseña. Esta consola es una herramienta de administración y no reemplaza la ejecución aislada de los pipelines: para despliegues reproducibles sigue usando jobs con `environment`, `secrets` y comandos `run`.
 
 Endpoints: `GET|POST /api/projects/{projectId}/servers`, `PUT|DELETE /api/projects/{projectId}/servers/{serverId}`, `POST .../{serverId}/test` y `POST .../{serverId}/commands`.
 

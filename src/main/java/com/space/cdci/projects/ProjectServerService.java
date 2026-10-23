@@ -55,10 +55,12 @@ public class ProjectServerService {
 		}
 		String host = normalizeHost(request.host());
 		String username = normalizeUsername(request.username());
+		String hostKeyFingerprint = normalizeHostKeyFingerprint(request.hostKeyFingerprint());
 		UserAccount user = users.findById(actor.id()).orElseThrow(ProjectServerService::notFound);
 		UUID serverId = UUID.randomUUID();
 		String ciphertext = cipher.encrypt(projectId, AAD_PREFIX + serverId, request.password());
-		ProjectServer server = servers.save(new ProjectServer(serverId, project, name, host, request.port(), username, ciphertext, user));
+		ProjectServer server = servers.save(new ProjectServer(serverId, project, name, host, request.port(), username,
+			hostKeyFingerprint, ciphertext, user));
 		project.touch();
 		audit.recordProject(projectId, actor.email(), "PROJECT_SERVER_CREATED", TARGET_TYPE, serverId.toString(),
 				auditSummary("Agregó el servidor " + name + " (" + username + "@" + host + ") al proyecto " + project.getName() + "."));
@@ -75,12 +77,13 @@ public class ProjectServerService {
 		}
 		String host = normalizeHost(request.host());
 		String username = normalizeUsername(request.username());
+		String hostKeyFingerprint = normalizeHostKeyFingerprint(request.hostKeyFingerprint());
 		UserAccount user = users.findById(actor.id()).orElseThrow(ProjectServerService::notFound);
 		String ciphertext = server.getPasswordCiphertext();
 		if (request.password() != null && !request.password().isBlank()) {
 			ciphertext = cipher.encrypt(projectId, AAD_PREFIX + serverId, request.password());
 		}
-		server.update(name, host, request.port(), username, ciphertext, user);
+		server.update(name, host, request.port(), username, hostKeyFingerprint, ciphertext, user);
 		project.touch();
 		audit.recordProject(projectId, actor.email(), "PROJECT_SERVER_UPDATED", TARGET_TYPE, serverId.toString(),
 				auditSummary("Actualizó el servidor " + name + " del proyecto " + project.getName() + "."));
@@ -102,7 +105,8 @@ public class ProjectServerService {
 		long started = System.nanoTime();
 		SshCommandRunner.SshResult result;
 		try {
-			result = ssh.execute(server.host(), server.port(), server.username(), server.password(), TEST_COMMAND);
+			result = ssh.execute(server.host(), server.port(), server.username(), server.password(),
+				server.hostKeyFingerprint(), TEST_COMMAND);
 		} catch (SshCommandRunner.SshException exception) {
 			markFailure(projectId, serverId, actor, server);
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
@@ -137,7 +141,8 @@ public class ProjectServerService {
 		LoadedServer server = loadForConnection(projectId, serverId, actor);
 		SshCommandRunner.SshResult result;
 		try {
-			result = ssh.execute(server.host(), server.port(), server.username(), server.password(), command);
+			result = ssh.execute(server.host(), server.port(), server.username(), server.password(),
+				server.hostKeyFingerprint(), command);
 		} catch (SshCommandRunner.SshException exception) {
 			markFailure(projectId, serverId, actor, server);
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
@@ -159,9 +164,10 @@ public class ProjectServerService {
 			Project project = access.requireManage(projectId, actor);
 			ProjectServer server = servers.findByIdAndProject_Id(serverId, projectId)
 					.orElseThrow(ProjectServerService::notFound);
+			String hostKeyFingerprint = normalizeHostKeyFingerprint(server.getHostKeyFingerprint());
 			String password = cipher.decrypt(projectId, AAD_PREFIX + serverId, server.getPasswordCiphertext());
 			return new LoadedServer(project.getName(), server.getId(), server.getName(), server.getHost(),
-					server.getPort(), server.getUsername(), password);
+					server.getPort(), server.getUsername(), hostKeyFingerprint, password);
 		});
 	}
 
@@ -204,13 +210,22 @@ public class ProjectServerService {
 		return username;
 	}
 
+	private static String normalizeHostKeyFingerprint(String rawFingerprint) {
+		try {
+			return SshHostKeyFingerprint.normalize(rawFingerprint);
+		} catch (IllegalArgumentException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+				"Registra la huella SSH SHA-256 del servidor y verifícala por un canal confiable.", exception);
+		}
+	}
+
 	private static String auditSummary(String summary) {
 		return summary.length() <= 500 ? summary : summary.substring(0, 497) + "...";
 	}
 
 	private static ProjectServerDtos.ServerSummary summary(ProjectServer server) {
 		return new ProjectServerDtos.ServerSummary(server.getId(), server.getName(), server.getHost(), server.getPort(),
-				server.getUsername(), server.getLastStatus(), server.getLastConnectedAt(),
+				server.getUsername(), server.getHostKeyFingerprint(), server.getLastStatus(), server.getLastConnectedAt(),
 				server.getCreatedBy().getEmail(), server.getUpdatedBy().getEmail(),
 				server.getCreatedAt(), server.getUpdatedAt());
 	}
@@ -224,5 +239,5 @@ public class ProjectServerService {
 	}
 
 	private record LoadedServer(String projectName, UUID id, String name, String host, int port, String username,
-			String password) {}
+			String hostKeyFingerprint, String password) {}
 }

@@ -16,6 +16,7 @@ public final class ProjectServerDtos {
 		@NotBlank @Size(max = 253) String host,
 		@NotNull @Min(1) @Max(65535) Integer port,
 		@NotBlank @Size(max = 100) String username,
+		@NotBlank @Size(max = 50) String hostKeyFingerprint,
 		@NotBlank @Size(max = 4096) String password) {}
 
 	public record UpdateServerRequest(
@@ -23,11 +24,12 @@ public final class ProjectServerDtos {
 		@NotBlank @Size(max = 253) String host,
 		@NotNull @Min(1) @Max(65535) Integer port,
 		@NotBlank @Size(max = 100) String username,
+		@NotBlank @Size(max = 50) String hostKeyFingerprint,
 		@Size(max = 4096) String password) {}
 
 	public record ExecuteCommandRequest(@NotBlank @Size(max = 4000) String command) {}
 
-	public record ServerSummary(UUID id, String name, String host, int port, String username, String lastStatus,
+	public record ServerSummary(UUID id, String name, String host, int port, String username, String hostKeyFingerprint, String lastStatus,
 			Instant lastConnectedAt, String createdBy, String updatedBy, Instant createdAt, Instant updatedAt) {}
 
 	public record TestConnectionResponse(String status, String message, String osInfo, long latencyMs, ServerSummary server) {}

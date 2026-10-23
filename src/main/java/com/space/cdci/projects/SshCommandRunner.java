@@ -23,15 +23,16 @@ public class SshCommandRunner {
 	private static final int COMMAND_TIMEOUT_MILLIS = 30_000;
 	private static final int MAX_OUTPUT_BYTES = 128 * 1024;
 
-	public SshResult execute(String host, int port, String username, String password, String command) {
+	public SshResult execute(String host, int port, String username, String password, String hostKeyFingerprint, String command) {
 		Session session = null;
 		ChannelExec channel = null;
 		long started = System.nanoTime();
 		try {
 			JSch jsch = new JSch();
+			jsch.setHostKeyRepository(new SshHostKeyFingerprint(hostKeyFingerprint));
 			session = jsch.getSession(username, host, port);
 			session.setPassword(password);
-			session.setConfig("StrictHostKeyChecking", "no");
+			session.setConfig("StrictHostKeyChecking", "yes");
 			session.setConfig("PreferredAuthentications", "password,keyboard-interactive");
 			session.setUserInfo(new PasswordUserInfo(password));
 			session.setTimeout(CONNECT_TIMEOUT_MILLIS);
@@ -88,6 +89,9 @@ public class SshCommandRunner {
 		String message = exception.getMessage() == null ? "" : exception.getMessage().toLowerCase(Locale.ROOT);
 		if (message.contains("auth fail") || message.contains("auth cancel")) {
 			return "El servidor rechazó el usuario o la contraseña.";
+		}
+		if (message.contains("hostkey") || message.contains("host key")) {
+			return "La huella del servidor no coincide con la registrada. Verifícala por un canal confiable antes de actualizarla.";
 		}
 		if (message.contains("connection refused")) {
 			return "El servidor rechazó la conexión. Verifica el puerto SSH y que el servicio esté activo.";
